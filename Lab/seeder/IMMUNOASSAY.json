@@ -1,0 +1,272 @@
+{
+  "department": {
+    "name": "Immunoassay",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Infection & Inflammation Markers",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "IA01",
+            "testName": "C-Reactive Protein",
+            "shortName": "CRP",
+            "sample": "Serum",
+            "method": "CLIA",
+            "unit": "mg/L",
+            "normalRange": "<6",
+            "reportFormat": "Quantitative",
+            "price": 500
+          },
+          {
+            "testCode": "IA02",
+            "testName": "High Sensitivity CRP",
+            "shortName": "hs-CRP",
+            "sample": "Serum",
+            "method": "CLIA",
+            "unit": "mg/L",
+            "normalRange": "<1.0",
+            "reportFormat": "Quantitative",
+            "price": 900
+          },
+          {
+            "testCode": "IA03",
+            "testName": "Procalcitonin",
+            "shortName": "PCT",
+            "sample": "Serum",
+            "method": "CLIA",
+            "unit": "ng/mL",
+            "normalRange": "<0.05",
+            "reportFormat": "Quantitative",
+            "price": 2200
+          },
+          {
+            "testCode": "IA04",
+            "testName": "Interleukin-6",
+            "shortName": "IL-6",
+            "sample": "Serum",
+            "method": "CLIA",
+            "unit": "pg/mL",
+            "normalRange": "<7",
+            "reportFormat": "Quantitative",
+            "price": 2500
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Iron & Vitamin Studies",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "IA05",
+            "testName": "Serum Ferritin",
+            "unit": "ng/mL",
+            "price": 900,
+            "ranges": {
+              "male": "30–400",
+              "female": "15–150",
+              "child": "7–140"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "IA06",
+            "testName": "Vitamin B12",
+            "unit": "pg/mL",
+            "price": 900,
+            "ranges": {
+              "male": "200–900",
+              "female": "200–900",
+              "child": "200–900"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "IA07",
+            "testName": "Vitamin D (25-OH)",
+            "unit": "ng/mL",
+            "price": 1200,
+            "ranges": {
+              "male": "30–100",
+              "female": "30–100",
+              "child": "30–100"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "IA08",
+            "testName": "Serum Iron",
+            "unit": "µg/dL",
+            "price": 600,
+            "ranges": {
+              "male": "65–175",
+              "female": "50–170",
+              "child": "40–150"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "IA09",
+            "testName": "TIBC",
+            "unit": "µg/dL",
+            "price": 600,
+            "ranges": {
+              "male": "250–450",
+              "female": "250–450",
+              "child": "250–450"
+            },
+            "reportFormat": "Quantitative"
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Tumor Markers",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "TM01",
+            "testName": "Alpha-Fetoprotein",
+            "shortName": "AFP",
+            "unit": "ng/mL",
+            "normalRange": "<10",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          },
+          {
+            "testCode": "TM02",
+            "testName": "Carcinoembryonic Antigen",
+            "shortName": "CEA",
+            "unit": "ng/mL",
+            "normalRange": "<5",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          },
+          {
+            "testCode": "TM03",
+            "testName": "Prostate Specific Antigen",
+            "shortName": "PSA",
+            "unit": "ng/mL",
+            "normalRange": "<4.0",
+            "reportFormat": "Quantitative",
+            "price": 1000
+          },
+          {
+            "testCode": "TM04",
+            "testName": "CA-125",
+            "shortName": "CA-125",
+            "unit": "U/mL",
+            "normalRange": "<35",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          },
+          {
+            "testCode": "TM05",
+            "testName": "CA-19.9",
+            "shortName": "CA-19.9",
+            "unit": "U/mL",
+            "normalRange": "<37",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          },
+          {
+            "testCode": "TM06",
+            "testName": "CA-15.3",
+            "shortName": "CA-15.3",
+            "unit": "U/mL",
+            "normalRange": "<30",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Cardiac Markers",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "CM01",
+            "testName": "Troponin-I",
+            "unit": "ng/mL",
+            "normalRange": "<0.04",
+            "criticalHigh": ">0.40",
+            "reportFormat": "Quantitative",
+            "price": 1800
+          },
+          {
+            "testCode": "CM02",
+            "testName": "CK-MB",
+            "unit": "ng/mL",
+            "normalRange": "<5",
+            "criticalHigh": ">25",
+            "reportFormat": "Quantitative",
+            "price": 900
+          },
+          {
+            "testCode": "CM03",
+            "testName": "NT-proBNP",
+            "unit": "pg/mL",
+            "normalRange": "<125",
+            "criticalHigh": ">900",
+            "reportFormat": "Quantitative",
+            "price": 2200
+          },
+          {
+            "testCode": "CM04",
+            "testName": "Myoglobin",
+            "unit": "ng/mL",
+            "normalRange": "25–72",
+            "criticalHigh": ">300",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Metabolic / Special Proteins",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "SP01",
+            "testName": "Serum Insulin (Fasting)",
+            "unit": "µIU/mL",
+            "normalRange": "2–25",
+            "price": 900
+          },
+          {
+            "testCode": "SP02",
+            "testName": "C-Peptide",
+            "unit": "ng/mL",
+            "normalRange": "0.8–3.1",
+            "price": 1200
+          },
+          {
+            "testCode": "SP03",
+            "testName": "Homocysteine",
+            "unit": "µmol/L",
+            "normalRange": "5–15",
+            "price": 1200
+          },
+          {
+            "testCode": "SP04",
+            "testName": "Serum Cortisol (Morning)",
+            "unit": "µg/dL",
+            "normalRange": "6–23",
+            "price": 900
+          }
+        ]
+      }
+    ]
+  }
+}

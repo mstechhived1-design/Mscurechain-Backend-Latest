@@ -1,0 +1,218 @@
+{
+  "department": {
+    "name": "Immunology",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Autoimmune Markers",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "IMMU01",
+            "testName": "Antinuclear Antibody",
+            "shortName": "ANA",
+            "sample": "Serum",
+            "method": "IFA",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative + Titre",
+            "price": 1200
+          },
+          {
+            "testCode": "IMMU02",
+            "testName": "Anti-dsDNA",
+            "shortName": "Anti-dsDNA",
+            "sample": "Serum",
+            "method": "ELISA",
+            "unit": "IU/mL",
+            "normalRange": "<30",
+            "reportFormat": "Quantitative",
+            "price": 1500
+          },
+          {
+            "testCode": "IMMU03",
+            "testName": "Anti-CCP Antibody",
+            "shortName": "Anti-CCP",
+            "sample": "Serum",
+            "method": "ELISA",
+            "unit": "U/mL",
+            "normalRange": "<20",
+            "reportFormat": "Quantitative",
+            "price": 1600
+          },
+          {
+            "testCode": "IMMU04",
+            "testName": "Anti-TPO Antibody",
+            "shortName": "Anti-TPO",
+            "sample": "Serum",
+            "method": "CLIA",
+            "unit": "IU/mL",
+            "normalRange": "<35",
+            "reportFormat": "Quantitative",
+            "price": 900
+          },
+          {
+            "testCode": "IMMU05",
+            "testName": "Anti-TG Antibody",
+            "shortName": "Anti-TG",
+            "sample": "Serum",
+            "method": "CLIA",
+            "unit": "IU/mL",
+            "normalRange": "<40",
+            "reportFormat": "Quantitative",
+            "price": 900
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Rheumatology Tests",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "RH01",
+            "testName": "Rheumatoid Factor",
+            "unit": "IU/mL",
+            "price": 600,
+            "ranges": {
+              "male": "<20",
+              "female": "<20",
+              "child": "<20"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "RH02",
+            "testName": "C-Reactive Protein (CRP)",
+            "unit": "mg/L",
+            "price": 500,
+            "ranges": {
+              "male": "<6",
+              "female": "<6",
+              "child": "<6"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "RH03",
+            "testName": "ASO Titre",
+            "unit": "IU/mL",
+            "price": 600,
+            "ranges": {
+              "male": "<200",
+              "female": "<200",
+              "child": "<200"
+            },
+            "reportFormat": "Semi-Quantitative"
+          },
+          {
+            "testCode": "RH04",
+            "testName": "HLA-B27",
+            "unit": null,
+            "price": 3000,
+            "ranges": {
+              "male": "Negative",
+              "female": "Negative",
+              "child": "Negative"
+            },
+            "reportFormat": "Positive / Negative"
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Allergy & Immunoglobulins",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "IG01",
+            "testName": "Immunoglobulin G (IgG)",
+            "unit": "mg/dL",
+            "price": 1200,
+            "ranges": {
+              "adult": "700–1600",
+              "child": "400–1200"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "IG02",
+            "testName": "Immunoglobulin A (IgA)",
+            "unit": "mg/dL",
+            "price": 1200,
+            "ranges": {
+              "adult": "70–400",
+              "child": "20–200"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "IG03",
+            "testName": "Immunoglobulin M (IgM)",
+            "unit": "mg/dL",
+            "price": 1200,
+            "ranges": {
+              "adult": "40–230",
+              "child": "30–200"
+            },
+            "reportFormat": "Quantitative"
+          },
+          {
+            "testCode": "IG04",
+            "testName": "Total IgE",
+            "unit": "IU/mL",
+            "price": 900,
+            "ranges": {
+              "adult": "<100",
+              "child": "<60"
+            },
+            "reportFormat": "Quantitative"
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Transplant / Compatibility Tests",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "TC01",
+            "testName": "Direct Coombs Test",
+            "sample": "Blood",
+            "reportFormat": "Positive / Negative",
+            "price": 600
+          },
+          {
+            "testCode": "TC02",
+            "testName": "Indirect Coombs Test",
+            "sample": "Serum",
+            "reportFormat": "Positive / Negative",
+            "price": 600
+          },
+          {
+            "testCode": "TC03",
+            "testName": "Complement C3",
+            "sample": "Serum",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          },
+          {
+            "testCode": "TC04",
+            "testName": "Complement C4",
+            "sample": "Serum",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+export { default as Prescription } from "./Prescription.js";
+export { default as CardiologyPrescription } from "./CardiologyPrescription.js";
+export { default as DermatologyPrescription } from "./DermatologyPrescription.js";
+export { default as ENTExamination } from "./ENTExamination.js";
+export { default as PediatricsExamination } from "./PediatricsExamination.js";
+export { default as GynecologyExamination } from "./GynecologyExamination.js";
+export { default as NeurologyExamination } from "./NeurologyExamination.js";
+export { default as GastroExamination } from "./GastroExamination.js";
+export { default as HematologyExamination } from "./HematologyExamination.js";
+export { default as OncologyExamination } from "./OncologyExamination.js";
+export { default as DentistryExamination } from "./DentistryExamination.js";
+export { default as UrologyExamination } from "./UrologyExamination.js";
+export { default as GeneralSurgeryExamination } from "./GeneralSurgeryExamination.js";

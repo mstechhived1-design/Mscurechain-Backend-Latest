@@ -1,0 +1,199 @@
+{
+  "department": {
+    "name": "Serology",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Infectious Disease Screening",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "SER01",
+            "testName": "HIV 1 & 2 Antibody",
+            "shortName": "HIV",
+            "sample": "Serum",
+            "method": "Rapid / ELISA",
+            "reportFormat": "Non-Reactive / Reactive",
+            "price": 500
+          },
+          {
+            "testCode": "SER02",
+            "testName": "HBsAg",
+            "shortName": "HBsAg",
+            "sample": "Serum",
+            "method": "ELISA",
+            "reportFormat": "Negative / Positive",
+            "price": 400
+          },
+          {
+            "testCode": "SER03",
+            "testName": "Anti-HCV",
+            "shortName": "HCV",
+            "sample": "Serum",
+            "method": "ELISA",
+            "reportFormat": "Negative / Positive",
+            "price": 600
+          },
+          {
+            "testCode": "SER04",
+            "testName": "VDRL",
+            "shortName": "VDRL",
+            "sample": "Serum",
+            "method": "RPR",
+            "reportFormat": "Non-Reactive / Reactive",
+            "price": 250
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Febrile Illness Panels",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "SER05",
+            "testName": "Widal Test",
+            "unit": "Titre",
+            "normalRange": "<1:80",
+            "reportFormat": "Titre",
+            "price": 350
+          },
+          {
+            "testCode": "SER06",
+            "testName": "Dengue NS1 Antigen",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 900
+          },
+          {
+            "testCode": "SER07",
+            "testName": "Dengue IgM Antibody",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 900
+          },
+          {
+            "testCode": "SER08",
+            "testName": "Dengue IgG Antibody",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 900
+          },
+          {
+            "testCode": "SER09",
+            "testName": "Malaria Antigen (Pf/Pv)",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 450
+          },
+          {
+            "testCode": "SER10",
+            "testName": "Typhidot IgM",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 900
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Sexually Transmitted Diseases (STD)",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "STD01",
+            "testName": "HIV Rapid Test",
+            "sample": "Serum",
+            "method": "Rapid",
+            "reportFormat": "Non-Reactive / Reactive",
+            "price": 350
+          },
+          {
+            "testCode": "STD02",
+            "testName": "TPHA",
+            "sample": "Serum",
+            "method": "Agglutination",
+            "reportFormat": "Non-Reactive / Reactive",
+            "price": 600
+          },
+          {
+            "testCode": "STD03",
+            "testName": "HSV-1 IgG",
+            "sample": "Serum",
+            "method": "ELISA",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          },
+          {
+            "testCode": "STD04",
+            "testName": "HSV-2 IgG",
+            "sample": "Serum",
+            "method": "ELISA",
+            "reportFormat": "Quantitative",
+            "price": 1200
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Viral Hepatitis Panel",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "HEP01",
+            "testName": "Anti-HBs",
+            "unit": "mIU/mL",
+            "normalRange": ">10 = Immune",
+            "reportFormat": "Quantitative",
+            "price": 900
+          },
+          {
+            "testCode": "HEP02",
+            "testName": "HBeAg",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 800
+          },
+          {
+            "testCode": "HEP03",
+            "testName": "Anti-HBe",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 800
+          },
+          {
+            "testCode": "HEP04",
+            "testName": "HAV IgM",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 800
+          },
+          {
+            "testCode": "HEP05",
+            "testName": "HEV IgM",
+            "unit": null,
+            "normalRange": "Negative",
+            "reportFormat": "Positive / Negative",
+            "price": 900
+          }
+        ]
+      }
+    ]
+  }
+}

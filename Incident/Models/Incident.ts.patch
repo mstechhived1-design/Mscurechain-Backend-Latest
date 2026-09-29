@@ -1,0 +1,11 @@
+--- Incident/Models/Incident.ts
++++ Incident/Models/Incident.ts
+@@ -97,8 +97,6 @@
+ incidentSchema.plugin(multiTenancyPlugin);
+ 
+ // Add index for hospital-based queries
+-incidentSchema.index({ incidentId: 1, hospital: 1 }, { unique: true });
+-incidentSchema.index({ hospital: 1 });
+ incidentSchema.index({ hospital: 1, status: 1 });
+ 
+ incidentSchema.pre("save", function (next) {

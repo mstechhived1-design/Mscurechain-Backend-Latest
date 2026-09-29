@@ -1,0 +1,241 @@
+{
+  "department": {
+    "name": "Biochemistry",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Blood Sugar",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "BS001",
+            "testName": "Fasting Blood Sugar",
+            "unit": "mg/dL",
+            "price": 80,
+            "ranges": {
+              "male": "70–99",
+              "female": "70–99",
+              "child": "70–100",
+              "newborn": "45–90"
+            }
+          },
+          {
+            "testCode": "BS002",
+            "testName": "Post Prandial Blood Sugar",
+            "unit": "mg/dL",
+            "price": 90,
+            "ranges": {
+              "male": "<140",
+              "female": "<140",
+              "child": "<140"
+            }
+          },
+          {
+            "testCode": "BS003",
+            "testName": "Random Blood Sugar",
+            "unit": "mg/dL",
+            "price": 80,
+            "ranges": {
+              "male": "70–140",
+              "female": "70–140",
+              "child": "70–150",
+              "newborn": "45–125"
+            }
+          },
+          {
+            "testCode": "BS004",
+            "testName": "HbA1c",
+            "unit": "%",
+            "price": 450,
+            "ranges": {
+              "male": "4.0–5.6",
+              "female": "4.0–5.6",
+              "child": "4.0–5.6"
+            }
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Kidney Function Test",
+        "isProfile": true,
+        "profilePrice": 800,
+        "numberOfParameters": 4,
+        "tests": [
+          {
+            "testCode": "KFT001",
+            "parameterName": "Blood Urea",
+            "unit": "mg/dL",
+            "price": 120,
+            "ranges": {
+              "male": "15–40",
+              "female": "15–40",
+              "child": "10–40",
+              "newborn": "5–18"
+            }
+          },
+          {
+            "testCode": "KFT002",
+            "parameterName": "Serum Creatinine",
+            "unit": "mg/dL",
+            "price": 150,
+            "ranges": {
+              "male": "0.7–1.3",
+              "female": "0.6–1.1",
+              "child": "0.3–0.7",
+              "newborn": "0.3–1.0"
+            }
+          },
+          {
+            "testCode": "KFT003",
+            "parameterName": "Uric Acid",
+            "unit": "mg/dL",
+            "price": 180,
+            "ranges": {
+              "male": "3.4–7.0",
+              "female": "2.4–6.0",
+              "child": "2.0–5.5",
+              "newborn": "1.0–4.0"
+            }
+          },
+          {
+            "testCode": "KFT004",
+            "parameterName": "Blood Urea Nitrogen (BUN)",
+            "unit": "mg/dL",
+            "price": 150,
+            "ranges": {
+              "male": "7–20",
+              "female": "7–20",
+              "child": "5–18",
+              "newborn": "3–12"
+            }
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Liver Function Test",
+        "isProfile": true,
+        "profilePrice": 1000,
+        "numberOfParameters": 7,
+        "tests": [
+          {
+            "testCode": "LFT001",
+            "parameterName": "Total Bilirubin",
+            "unit": "mg/dL",
+            "price": 120,
+            "ranges": {
+              "male": "0.3–1.2",
+              "female": "0.3–1.2",
+              "child": "0.2–1.0",
+              "newborn": "1.0–12.0"
+            }
+          },
+          {
+            "testCode": "LFT002",
+            "parameterName": "Direct Bilirubin",
+            "unit": "mg/dL",
+            "price": 120,
+            "ranges": {
+              "male": "0.0–0.3",
+              "female": "0.0–0.3",
+              "child": "0.0–0.2",
+              "newborn": "0.5–1.0"
+            }
+          },
+          {
+            "testCode": "LFT003",
+            "parameterName": "SGOT (AST)",
+            "unit": "U/L",
+            "price": 150,
+            "ranges": {
+              "male": "10–40",
+              "female": "9–32",
+              "child": "15–60",
+              "newborn": "30–80"
+            }
+          },
+          {
+            "testCode": "LFT004",
+            "parameterName": "SGPT (ALT)",
+            "unit": "U/L",
+            "price": 150,
+            "ranges": {
+              "male": "10–45",
+              "female": "7–35",
+              "child": "10–55",
+              "newborn": "30–70"
+            }
+          },
+          {
+            "testCode": "LFT005",
+            "parameterName": "Alkaline Phosphatase",
+            "unit": "U/L",
+            "price": 180,
+            "ranges": {
+              "male": "40–129",
+              "female": "35–104",
+              "child": "150–420",
+              "newborn": "150–300"
+            }
+          },
+          {
+            "testCode": "LFT006",
+            "parameterName": "Total Protein",
+            "unit": "g/dL",
+            "price": 150,
+            "ranges": {
+              "male": "6.0–8.3",
+              "female": "6.0–8.3",
+              "child": "5.5–7.5",
+              "newborn": "4.5–7.0"
+            }
+          },
+          {
+            "testCode": "LFT007",
+            "parameterName": "Albumin",
+            "unit": "g/dL",
+            "price": 150,
+            "ranges": {
+              "male": "3.5–5.0",
+              "female": "3.5–5.0",
+              "child": "3.5–5.5",
+              "newborn": "3.0–4.5"
+            }
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Lipid Profile",
+        "isProfile": true,
+        "profilePrice": 900,
+        "tests": [
+          { "testCode": "LP001", "testName": "Total Cholesterol", "unit": "mg/dL", "normalRange": "<200", "price": 150 },
+          { "testCode": "LP002", "testName": "Triglycerides", "unit": "mg/dL", "normalRange": "<150", "price": 150 },
+          { "testCode": "LP003", "testName": "HDL Cholesterol", "unit": "mg/dL", "normalRange": ">40", "price": 150 },
+          { "testCode": "LP004", "testName": "LDL Cholesterol", "unit": "mg/dL", "normalRange": "<100", "price": 150 },
+          { "testCode": "LP005", "testName": "VLDL", "unit": "mg/dL", "normalRange": "5–40", "price": 150 }
+        ]
+      },
+
+      {
+        "testGroup": "Electrolytes",
+        "isProfile": false,
+        "tests": [
+          { "testName": "Sodium", "unit": "mmol/L", "normalRange": "135–145", "price": 200 },
+          { "testName": "Potassium", "unit": "mmol/L", "normalRange": "3.5–5.1", "price": 200 },
+          { "testName": "Chloride", "unit": "mmol/L", "normalRange": "98–107", "price": 200 }
+        ]
+      }
+    ]
+  }
+}

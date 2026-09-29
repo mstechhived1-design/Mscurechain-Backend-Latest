@@ -1,0 +1,1052 @@
+openapi: 3.0.0
+info:
+  title: MsCureChain Hospital Management System API
+  description: Comprehensive API documentation for MsCureChain backend modules 1-11, including SOP, Training, Incidents, Roster, Quality, Support, Emergency, Leave, Announcements, Notes, and Vital Thresholds.
+  version: 1.0.0
+servers:
+  - url: "{{baseUrl}}/api"
+    description: Production Server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  
+  schemas:
+    SOP:
+      type: object
+      properties:
+        _id: { type: string }
+        name: { type: string }
+        category: { type: string, enum: [OPD, IPD, Billing, Infection Control, Emergency, HR, Pharmacy, Lab, General] }
+        version: { type: integer }
+        fileUrl: { type: string }
+        status: { type: string, enum: [Active, Archived] }
+        assignedRole: { type: string, enum: [Staff, Doctor, Nurse] }
+        uploadedBy: { type: string }
+        lastUpdated: { type: string, format: date-time }
+
+    TrainingRecord:
+      type: object
+      properties:
+        trainingName: { type: string }
+        trainingDate: { type: string, format: date }
+        department: { type: string }
+        participants: { type: array, items: { type: string } }
+        description: { type: string }
+        status: { type: string, enum: [Scheduled, Completed, Cancelled] }
+        certificateUrl: { type: string }
+
+    Incident:
+      type: object
+      properties:
+        incidentId: { type: string }
+        incidentDate: { type: string, format: date-time }
+        department: { type: string }
+        incidentType: { type: string }
+        severity: { type: string, enum: [Low, Medium, High] }
+        description: { type: string }
+        attachments: 
+          type: array
+          items:
+            type: object
+            properties:
+              url: { type: string }
+              fileName: { type: string }
+        status: { type: string, enum: [OPEN, "IN REVIEW", CLOSED] }
+
+    Shift:
+      type: object
+      properties:
+        _id: { type: string }
+        name: { type: string }
+        startTime: { type: string, example: "08:00" }
+        endTime: { type: string, example: "16:00" }
+        color: { type: string }
+        status: { type: string, enum: [active, inactive] }
+
+    QualityIndicator:
+      type: object
+      properties:
+        name: { type: string }
+        department: { type: string, enum: [OPD, IPD, ICU, Hospital-wide] }
+        problemIdentified: { type: string }
+        baselineValue: { type: number }
+        targetValue: { type: number }
+        unit: { type: string }
+        status: { type: string, enum: [Pending, "In Progress", Improved, Closed] }
+
+    QualityAction:
+      type: object
+      properties:
+        indicatorId: { type: string }
+        problemDescription: { type: string }
+        period:
+          type: object
+          properties:
+            from: { type: string, format: date }
+            to: { type: string, format: date }
+        actionDescription: { type: string }
+        responsibleDepartment: { type: string }
+        startDate: { type: string, format: date }
+        reviewDate: { type: string, format: date }
+        status: { type: string, enum: [Open, "In Progress", Completed] }
+        isClosed: { type: boolean }
+
+    SupportRequest:
+      type: object
+      properties:
+        subject: { type: string }
+        message: { type: string }
+        type: { type: string, enum: [feedback, complaint, bug, other] }
+        status: { type: string, enum: [open, "in-progress", resolved] }
+        attachments: { type: array, items: { type: string } }
+
+    EmergencyRequest:
+      type: object
+      properties:
+        patientName: { type: string }
+        patientAge: { type: integer }
+        patientGender: { type: string, enum: [male, female, other] }
+        emergencyType: { type: string }
+        severity: { type: string, enum: [critical, high, medium, low] }
+        currentLocation: { type: string }
+        vitals:
+          type: object
+          properties:
+            bloodPressure: { type: string }
+            heartRate: { type: integer }
+            oxygenLevel: { type: integer }
+        status: { type: string, enum: [pending, accepted, rejected, completed, cancelled] }
+
+    LeaveRequest:
+      type: object
+      properties:
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        reason: { type: string }
+        leaveType: { type: string, enum: [sick, casual, emergency, maternity, other] }
+        status: { type: string, enum: [pending, approved, rejected] }
+
+    Announcement:
+      type: object
+      properties:
+        title: { type: string }
+        content: { type: string }
+        priority: { type: string, enum: [low, medium, high] }
+        targetRoles: { type: array, items: { type: string } }
+
+    Note:
+      type: object
+      properties:
+        text: { type: string }
+        timestamp: { type: string, format: date-time }
+
+    VitalThreshold:
+      type: object
+      properties:
+        vitalName: { type: string }
+        physicalMin: { type: number }
+        lowerCritical: { type: number }
+        lowerWarning: { type: number }
+        targetMin: { type: number }
+        targetMax: { type: number }
+        upperWarning: { type: number }
+        upperCritical: { type: number }
+        physicalMax: { type: number }
+        unit: { type: string }
+        escalationCriticalMinutes: { type: number }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # SOP Module
+  /sop:
+    post:
+      summary: Upload SOP (New version or new protocol)
+      tags: [SOP]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                sopFile: { type: string, format: binary }
+                name: { type: string }
+                category: { type: string }
+                assignedRole: { type: string }
+      responses:
+        '201':
+          description: Created
+    get:
+      summary: Get SOP List
+      tags: [SOP]
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: search
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /sop/{id}:
+    put:
+      summary: Update SOP Metadata
+      tags: [SOP]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                sopFile: { type: string, format: binary }
+                name: { type: string }
+                category: { type: string }
+                assignedRole: { type: string }
+      responses:
+        '200':
+          description: OK
+  /sop/{id}/archive:
+    patch:
+      summary: Archive SOP
+      tags: [SOP]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /sop/history/{name}:
+    get:
+      summary: Get SOP Version History
+      tags: [SOP]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /sop/download/{id}:
+    get:
+      summary: Download SOP (Secure)
+      tags: [SOP]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: download
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: OK
+  /sop/{id}/acknowledge:
+    post:
+      summary: Acknowledge SOP
+      tags: [SOP]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /sop/{id}/report:
+    get:
+      summary: Get Acknowledgment Report (Admin)
+      tags: [SOP]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Training Module
+  /training:
+    post:
+      summary: Log Training/Internship Record
+      tags: [Training]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                trainingName: { type: string }
+                trainingDate: { type: string, format: date }
+                department: { type: string }
+                participants: { type: array, items: { type: string } }
+                description: { type: string }
+                status: { type: string }
+                certificate: { type: string, format: binary }
+      responses:
+        '201':
+          description: Created
+    get:
+      summary: Get All Training Records
+      tags: [Training]
+      responses:
+        '200':
+          description: OK
+  /training/{id}:
+    patch:
+      summary: Update Training Record
+      tags: [Training]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                trainingName: { type: string }
+                trainingDate: { type: string, format: date }
+                department: { type: string }
+                participants: { type: array, items: { type: string } }
+                description: { type: string }
+                status: { type: string }
+                certificate: { type: string, format: binary }
+      responses:
+        '200':
+          description: OK
+    delete:
+      summary: Delete Training
+      tags: [Training]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /training/my-history:
+    get:
+      summary: Get My Training History
+      tags: [Training]
+      responses:
+        '200':
+          description: OK
+  /training/staff/{staffId}:
+    get:
+      summary: Get Specific Staff History
+      tags: [Training]
+      parameters:
+        - name: staffId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Incidents Module
+  /incidents/report:
+    post:
+      summary: Report Incident
+      tags: [Incidents]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                incidentDate: { type: string, format: date-time }
+                department: { type: string }
+                incidentType: { type: string }
+                severity: { type: string }
+                description: { type: string }
+                attachments: { type: array, items: { type: string, format: binary } }
+                patientFallDetails: { type: string }
+      responses:
+        '201':
+          description: Created
+  /incidents/all:
+    get:
+      summary: List All Incidents
+      tags: [Incidents]
+      parameters:
+        - name: startDate
+          in: query
+          schema: { type: string, format: date }
+        - name: endDate
+          in: query
+          schema: { type: string, format: date }
+        - name: department
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /incidents/respond/{incidentId}:
+    post:
+      summary: Respond to Incident (Admin)
+      tags: [Incidents]
+      parameters:
+        - name: incidentId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message: { type: string }
+                actionTaken: { type: string }
+                status: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Roster Module
+  /hospital-admin/shifts:
+    post:
+      summary: Create Shift
+      tags: [Roster]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                startTime: { type: string }
+                endTime: { type: string }
+                color: { type: string }
+      responses:
+        '201':
+          description: Created
+    get:
+      summary: Get All Shifts
+      tags: [Roster]
+      responses:
+        '200':
+          description: OK
+  /hospital-admin/shifts/{id}:
+    put:
+      summary: Update Shift
+      tags: [Roster]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+    delete:
+      summary: Delete Shift
+      tags: [Roster]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /hospital-admin/shifts/{id}/assign:
+    post:
+      summary: Assign Staff to Roster
+      tags: [Roster]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                staffIds: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: OK
+  /staff/attendance/schedule:
+    get:
+      summary: Get My Schedule & Roster
+      tags: [Roster]
+      responses:
+        '200':
+          description: OK
+
+  # Quality Module
+  /quality/indicators:
+    post:
+      summary: Create Indicator
+      tags: [Quality]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualityIndicator'
+      responses:
+        '201':
+          description: Created
+    get:
+      summary: Get All Indicators
+      tags: [Quality]
+      responses:
+        '200':
+          description: OK
+  /quality/indicators/{id}:
+    patch:
+      summary: Update Indicator
+      tags: [Quality]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+    delete:
+      summary: Delete Indicator
+      tags: [Quality]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /quality/actions:
+    post:
+      summary: Create Corrective Action (CAPA)
+      tags: [Quality]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualityAction'
+      responses:
+        '201':
+          description: Created
+  /quality/actions/{id}/status:
+    patch:
+      summary: Update Action Status
+      tags: [Quality]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+      responses:
+        '200':
+          description: OK
+  /quality/actions/{id}/evaluate:
+    patch:
+      summary: Evaluate Outcome (Close CAPA)
+      tags: [Quality]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                measurableResultAfter: { type: number }
+                outcomeSummary: { type: string }
+                isClosed: { type: boolean }
+      responses:
+        '200':
+          description: OK
+
+  # Support Module
+  /support:
+    post:
+      summary: Raise Ticket
+      tags: [Support]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                subject: { type: string }
+                message: { type: string }
+                type: { type: string }
+                attachments: { type: array, items: { type: string, format: binary } }
+      responses:
+        '201':
+          description: Created
+    get:
+      summary: Get All Tickets (Admin)
+      tags: [Support]
+      responses:
+        '200':
+          description: OK
+  /support/my-tickets:
+    get:
+      summary: Get My Tickets
+      tags: [Support]
+      responses:
+        '200':
+          description: OK
+  /support/{id}:
+    get:
+      summary: Get Ticket Details
+      tags: [Support]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /support/{id}/reply:
+    post:
+      summary: Reply to Ticket
+      tags: [Support]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                message: { type: string }
+                attachments: { type: array, items: { type: string, format: binary } }
+      responses:
+        '200':
+          description: OK
+  /support/{id}/status:
+    put:
+      summary: Update Ticket Status (Admin)
+      tags: [Support]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Emergency Module
+  /emergency/requests:
+    post:
+      summary: Create Emergency Entry (Ambulance)
+      tags: [Emergency]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmergencyRequest'
+      responses:
+        '201':
+          description: Created
+  /emergency/requests/patient:
+    post:
+      summary: Create Emergency Request (Patient)
+      tags: [Emergency]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                emergencyType: { type: string }
+                description: { type: string }
+                severity: { type: string }
+                currentLocation: { type: string }
+                hospitalId: { type: string }
+      responses:
+        '201':
+          description: Created
+  /emergency/requests/my-requests:
+    get:
+      summary: Get My Requests (Ambulance)
+      tags: [Emergency]
+      responses:
+        '200':
+          description: OK
+  /emergency/requests/hospital:
+    get:
+      summary: Hospital Dashboard View
+      tags: [Emergency]
+      responses:
+        '200':
+          description: OK
+  /emergency/requests/hospital/stats:
+    get:
+      summary: Emergency Statistics
+      tags: [Emergency]
+      responses:
+        '200':
+          description: OK
+  /emergency/requests/{requestId}/accept:
+    put:
+      summary: Accept Request (Helpdesk)
+      tags: [Emergency]
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /emergency/requests/{requestId}/reject:
+    put:
+      summary: Reject Request (Helpdesk)
+      tags: [Emergency]
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rejectionReason: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Leave Module
+  /leaves/request:
+    post:
+      summary: Apply for Leave
+      tags: [Leave]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveRequest'
+      responses:
+        '201':
+          description: Created
+  /leaves:
+    get:
+      summary: Get Leaves History
+      tags: [Leave]
+      responses:
+        '200':
+          description: OK
+  /leaves/balance:
+    get:
+      summary: Get Leave Balance
+      tags: [Leave]
+      responses:
+        '200':
+          description: OK
+  /leaves/{id}:
+    delete:
+      summary: Delete Leave (Withdraw)
+      tags: [Leave]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /leaves/{id}/status:
+    put:
+      summary: Update Leave Status (Admin)
+      tags: [Leave]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Announcements Module
+  /announcements:
+    post:
+      summary: Publish Announcement
+      tags: [Announcements]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Announcement'
+      responses:
+        '201':
+          description: Created
+    get:
+      summary: Get All Announcements
+      tags: [Announcements]
+      responses:
+        '200':
+          description: OK
+  /announcements/hospital:
+    get:
+      summary: Get Hospital Announcements
+      tags: [Announcements]
+      responses:
+        '200':
+          description: OK
+  /announcements/{id}:
+    patch:
+      summary: Update Announcement
+      tags: [Announcements]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+    delete:
+      summary: Delete Announcement
+      tags: [Announcements]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Notes Module
+  /notes:
+    post:
+      summary: Save Personal Note
+      tags: [Notes]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string }
+      responses:
+        '201':
+          description: Created
+  /notes/{doctorId}:
+    get:
+      summary: Get My Notes
+      tags: [Notes]
+      parameters:
+        - name: doctorId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /notes/{id}:
+    delete:
+      summary: Delete Note
+      tags: [Notes]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /notes/all/{doctorId}:
+    delete:
+      summary: Delete All My Notes
+      tags: [Notes]
+      parameters:
+        - name: doctorId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+
+  # Thresholds Module
+  /ipd/thresholds/import:
+    post:
+      summary: Bulk Import via CSV
+      tags: [Thresholds]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: Created
+  /ipd/thresholds/templates:
+    get:
+      summary: List All Templates
+      tags: [Thresholds]
+      responses:
+        '200':
+          description: OK
+    post:
+      summary: Create Template
+      tags: [Thresholds]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                templateName: { type: string }
+                wardType: { type: string }
+      responses:
+        '201':
+          description: Created
+  /ipd/thresholds/templates/{templateId}:
+    get:
+      summary: Get Template Thresholds
+      tags: [Thresholds]
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+    patch:
+      summary: Update Template
+      tags: [Thresholds]
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+    delete:
+      summary: Delete Template
+      tags: [Thresholds]
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+  /ipd/thresholds/templates/{templateId}/save:
+    post:
+      summary: Save/Upsert Threshold Rows
+      tags: [Thresholds]
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                monitoringFrequency: { type: number }
+                thresholds: 
+                  type: array
+                  items: { $ref: '#/components/schemas/VitalThreshold' }
+      responses:
+        '200':
+          description: OK
+  /ipd/thresholds/templates/{templateId}/copy:
+    post:
+      summary: Copy Template
+      tags: [Thresholds]
+      parameters:
+        - name: templateId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                newTemplateName: { type: string }
+                newWardType: { type: string }
+      responses:
+        '201':
+          description: Created
+  /ipd/thresholds/admission/{admissionId}:
+    get:
+      summary: Get Admission Thresholds
+      tags: [Thresholds]
+      parameters:
+        - name: admissionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK

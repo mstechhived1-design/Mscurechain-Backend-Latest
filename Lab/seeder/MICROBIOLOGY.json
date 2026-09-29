@@ -1,0 +1,219 @@
+{
+  "department": {
+    "name": "Microbiology",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Routine Microscopy & Staining",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "MB01",
+            "testName": "Gram Stain",
+            "sampleType": "Pus / Sputum",
+            "method": "Microscopy",
+            "reportFormat": "Organisms Seen / Not Seen",
+            "price": 250
+          },
+          {
+            "testCode": "MB02",
+            "testName": "AFB Smear",
+            "sampleType": "Sputum",
+            "method": "Ziehl-Neelsen",
+            "reportFormat": "Positive / Negative",
+            "price": 300
+          },
+          {
+            "testCode": "MB03",
+            "testName": "KOH Mount",
+            "sampleType": "Skin / Nail",
+            "method": "Microscopy",
+            "reportFormat": "Fungal Elements Seen / Not Seen",
+            "price": 300
+          },
+          {
+            "testCode": "MB04",
+            "testName": "Wet Mount",
+            "sampleType": "Vaginal Swab",
+            "method": "Microscopy",
+            "reportFormat": "Trichomonas Seen / Not Seen",
+            "price": 250
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Culture & Sensitivity (C/S)",
+        "isProfile": true,
+        "profileDetails": {
+          "profileName": "Culture & Sensitivity",
+          "notes": "Antibiotic Sensitivity Test (AST) is auto-linked and not billed separately"
+        },
+        "tests": [
+          {
+            "testCode": "CS01",
+            "testName": "Urine Culture & Sensitivity",
+            "sampleType": "Urine",
+            "method": "Automated / Manual",
+            "reportFormat": "Growth / No Growth + AST",
+            "price": 900
+          },
+          {
+            "testCode": "CS02",
+            "testName": "Blood Culture",
+            "sampleType": "Blood",
+            "method": "Automated",
+            "reportFormat": "Growth / No Growth + AST",
+            "price": 1600
+          },
+          {
+            "testCode": "CS03",
+            "testName": "Pus Culture",
+            "sampleType": "Pus",
+            "method": "Manual",
+            "reportFormat": "Growth / No Growth + AST",
+            "price": 1000
+          },
+          {
+            "testCode": "CS04",
+            "testName": "Sputum Culture",
+            "sampleType": "Sputum",
+            "method": "Manual",
+            "reportFormat": "Growth / No Growth + AST",
+            "price": 1000
+          },
+          {
+            "testCode": "CS05",
+            "testName": "Stool Culture",
+            "sampleType": "Stool",
+            "method": "Selective Media",
+            "reportFormat": "Pathogen Isolated / Not Isolated",
+            "price": 1200
+          }
+        ],
+        "AST": {
+          "linked": true,
+          "parameters": [
+            "Antibiotic Name",
+            "Sensitive",
+            "Intermediate",
+            "Resistant"
+          ]
+        }
+      },
+
+      {
+        "testGroup": "Mycology",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "MYC01",
+            "testName": "Fungal Culture",
+            "sampleType": "Nail / Skin",
+            "method": "SDA Culture",
+            "reportFormat": "Fungus Identified",
+            "price": 1500
+          },
+          {
+            "testCode": "MYC02",
+            "testName": "Yeast Identification",
+            "sampleType": "Swab",
+            "method": "Biochemical",
+            "reportFormat": "Species Name",
+            "price": 1200
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Parasitology",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "PAR01",
+            "testName": "Stool for Ova & Parasite",
+            "sampleType": "Stool",
+            "method": "Microscopy",
+            "reportFormat": "Ova/Cyst Seen / Not Seen",
+            "price": 250
+          },
+          {
+            "testCode": "PAR02",
+            "testName": "Microfilaria Smear",
+            "sampleType": "Blood",
+            "method": "Night Smear",
+            "reportFormat": "Present / Absent",
+            "price": 300
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Tuberculosis Tests",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "TB01",
+            "testName": "AFB Smear (ZN)",
+            "sampleType": "Sputum",
+            "method": "Microscopy",
+            "reportFormat": "Positive / Negative",
+            "price": 300
+          },
+          {
+            "testCode": "TB02",
+            "testName": "CBNAAT (GeneXpert)",
+            "sampleType": "Sputum",
+            "method": "PCR",
+            "reportFormat": "MTB Detected / Not Detected",
+            "price": 2500
+          },
+          {
+            "testCode": "TB03",
+            "testName": "AFB Culture (MGIT)",
+            "sampleType": "Sputum",
+            "method": "Automated",
+            "reportFormat": "Growth / No Growth",
+            "price": 3500
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Special Rapid Tests",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "RAP01",
+            "testName": "H. pylori Antigen",
+            "sampleType": "Stool",
+            "reportFormat": "Positive / Negative",
+            "price": 1200
+          },
+          {
+            "testCode": "RAP02",
+            "testName": "Rotavirus Antigen",
+            "sampleType": "Stool",
+            "reportFormat": "Positive / Negative",
+            "price": 1200
+          },
+          {
+            "testCode": "RAP03",
+            "testName": "Clostridium difficile Toxin",
+            "sampleType": "Stool",
+            "reportFormat": "Positive / Negative",
+            "price": 1800
+          }
+        ]
+      }
+    ]
+  }
+}

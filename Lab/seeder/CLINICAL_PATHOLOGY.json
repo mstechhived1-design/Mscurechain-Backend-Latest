@@ -1,0 +1,315 @@
+{
+  "department": {
+    "name": "Clinical Pathology",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Urine Routine Examination (URE)",
+        "isProfile": true,
+        "profilePrice": 200,
+        "numberOfParameters": 20,
+        "reportFormat": "Table + Remarks",
+        "tests": [
+          {
+            "testCode": "URE01",
+            "parameterName": "Colour",
+            "unit": null,
+            "normalRange": "Pale Yellow",
+            "price": 120
+          },
+          {
+            "testCode": "URE02",
+            "parameterName": "Appearance",
+            "unit": null,
+            "normalRange": "Clear",
+            "price": 120
+          },
+          {
+            "testCode": "URE03",
+            "parameterName": "Specific Gravity",
+            "unit": null,
+            "normalRange": "1.005–1.030",
+            "price": 120
+          },
+          {
+            "testCode": "URE04",
+            "parameterName": "pH",
+            "unit": null,
+            "normalRange": "4.5–8.0",
+            "price": 120
+          },
+          {
+            "testCode": "URE05",
+            "parameterName": "Protein",
+            "unit": null,
+            "normalRange": "Nil / Trace",
+            "price": 120
+          },
+          {
+            "testCode": "URE06",
+            "parameterName": "Glucose",
+            "unit": null,
+            "normalRange": "Negative",
+            "price": 120
+          },
+          {
+            "testCode": "URE07",
+            "parameterName": "Ketone Bodies",
+            "unit": null,
+            "normalRange": "Negative",
+            "price": 120
+          },
+          {
+            "testCode": "URE08",
+            "parameterName": "Bilirubin",
+            "unit": null,
+            "normalRange": "Negative",
+            "price": 120
+          },
+          {
+            "testCode": "URE09",
+            "parameterName": "Urobilinogen",
+            "unit": "mg/dL",
+            "normalRange": "0.2–1.0",
+            "price": 120
+          },
+          {
+            "testCode": "URE10",
+            "parameterName": "Nitrite",
+            "unit": null,
+            "normalRange": "Negative",
+            "price": 120
+          },
+          {
+            "testCode": "URE11",
+            "parameterName": "Blood",
+            "unit": null,
+            "normalRange": "Negative",
+            "price": 120
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Urine Microscopy",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "UMC01",
+            "testName": "Pus Cells",
+            "unit": "/HPF",
+            "normalRange": "0–5",
+            "price": 0
+          },
+          {
+            "testCode": "UMC02",
+            "testName": "RBC",
+            "unit": "/HPF",
+            "normalRange": "0–2",
+            "price": 0
+          },
+          {
+            "testCode": "UMC03",
+            "testName": "Epithelial Cells",
+            "unit": "/HPF",
+            "normalRange": "Few",
+            "price": 0
+          },
+          {
+            "testCode": "UMC04",
+            "testName": "Casts",
+            "unit": null,
+            "normalRange": "Nil",
+            "price": 0
+          },
+          {
+            "testCode": "UMC05",
+            "testName": "Crystals",
+            "unit": null,
+            "normalRange": "Nil",
+            "price": 0
+          },
+          {
+            "testCode": "UMC06",
+            "testName": "Bacteria",
+            "unit": null,
+            "normalRange": "Nil",
+            "price": 0
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Stool Routine Examination",
+        "isProfile": true,
+        "profilePrice": 200,
+        "tests": [
+          {
+            "testCode": "SRE01",
+            "parameterName": "Colour",
+            "normalRange": "Brown",
+            "price": 150
+          },
+          {
+            "testCode": "SRE02",
+            "parameterName": "Consistency",
+            "normalRange": "Formed",
+            "price": 150
+          },
+          {
+            "testCode": "SRE03",
+            "parameterName": "Mucus",
+            "normalRange": "Absent",
+            "price": 150
+          },
+          {
+            "testCode": "SRE04",
+            "parameterName": "Blood",
+            "normalRange": "Absent",
+            "price": 150
+          },
+          {
+            "testCode": "SRE05",
+            "parameterName": "Reaction (pH)",
+            "normalRange": "Neutral",
+            "price": 150
+          },
+          {
+            "testCode": "SRE06",
+            "parameterName": "Reducing Substances",
+            "normalRange": "Negative",
+            "price": 150
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Stool Microscopy",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "SMC01",
+            "testName": "Ova",
+            "normalRange": "Absent",
+            "price": 0
+          },
+          {
+            "testCode": "SMC02",
+            "testName": "Cyst",
+            "normalRange": "Absent",
+            "price": 0
+          },
+          {
+            "testCode": "SMC03",
+            "testName": "Trophozoites",
+            "normalRange": "Absent",
+            "price": 0
+          },
+          {
+            "testCode": "SMC04",
+            "testName": "Pus Cells",
+            "normalRange": "Absent",
+            "price": 0
+          },
+          {
+            "testCode": "SMC05",
+            "testName": "RBC",
+            "normalRange": "Absent",
+            "price": 0
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Body Fluid Analysis",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "BF01",
+            "testName": "Appearance",
+            "normalRange": "Clear",
+            "price": 350
+          },
+          {
+            "testCode": "BF02",
+            "testName": "Total Cell Count",
+            "unit": "cells/cumm",
+            "normalRange": "<1000",
+            "price": 350
+          },
+          {
+            "testCode": "BF03",
+            "testName": "Differential Count",
+            "unit": "%",
+            "normalRange": "Predominantly lymphocytes",
+            "price": 350
+          },
+          {
+            "testCode": "BF04",
+            "testName": "Protein",
+            "unit": "g/dL",
+            "normalRange": "<3.0",
+            "price": 350
+          },
+          {
+            "testCode": "BF05",
+            "testName": "Sugar",
+            "unit": "mg/dL",
+            "normalRange": ">60",
+            "price": 350
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Semen Analysis",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "SEM01",
+            "testName": "Volume",
+            "unit": "mL",
+            "normalRange": "≥1.5",
+            "price": 500
+          },
+          {
+            "testCode": "SEM02",
+            "testName": "Sperm Count",
+            "unit": "million/mL",
+            "normalRange": "≥15",
+            "price": 500
+          },
+          {
+            "testCode": "SEM03",
+            "testName": "Motility",
+            "unit": "%",
+            "normalRange": "≥40",
+            "price": 500
+          },
+          {
+            "testCode": "SEM04",
+            "testName": "Morphology",
+            "unit": "%",
+            "normalRange": "≥4",
+            "price": 500
+          },
+          {
+            "testCode": "SEM05",
+            "testName": "pH",
+            "unit": null,
+            "normalRange": "7.2–8.0",
+            "price": 500
+          }
+        ]
+      }
+    ]
+  }
+}

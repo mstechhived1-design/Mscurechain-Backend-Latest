@@ -1,0 +1,702 @@
+{
+    "symptoms_data": [
+        {
+            "symptom": "Headache (Tension)",
+            "medicine": [
+                "Paracetamol 500 mg (every 6–8 hrs, max 3/day)",
+                "Ibuprofen 200–400 mg (every 8 hrs, after food)"
+            ],
+            "diet_advice": [
+                "Drink plenty of water",
+                "Avoid caffeine excess",
+                "Eat regularly to avoid low sugar"
+            ],
+            "suggested_tests": [
+                "Blood pressure check"
+            ],
+            "follow_up": "See a doctor if pain persists >48 hours or worsens",
+            "avoid": [
+                "Skipping meals",
+                "Too much screen time"
+            ]
+        },
+        {
+            "symptom": "Migraine",
+            "medicine": [
+                "Naproxen 500 mg (at onset)",
+                "Sumatriptan (if prescribed)",
+                "Anti-nausea medication if needed"
+            ],
+            "diet_advice": [
+                "Magnesium-rich foods (spinach, almonds)",
+                "Hydration"
+            ],
+            "suggested_tests": [
+                "MRI Brain (if chronic/severe)"
+            ],
+            "follow_up": "Consult Neurologist for prophylaxis",
+            "avoid": [
+                "Trigger foods (cheese, chocolate, wine)",
+                "Bright lights",
+                "Loud noises"
+            ]
+        },
+        {
+            "symptom": "Fever",
+            "medicine": [
+                "Paracetamol 500 mg (every 6 hrs)",
+                "Ibuprofen 200–400 mg (if fever not relieved by paracetamol)"
+            ],
+            "diet_advice": [
+                "Stay hydrated",
+                "Warm soups",
+                "Electrolyte fluids"
+            ],
+            "suggested_tests": [
+                "CBC",
+                "COVID/Flu test if needed",
+                "Dengue/Malaria tests (if endemic)"
+            ],
+            "follow_up": "Consult if fever >3 days or above 103°F",
+            "avoid": [
+                "Dehydration",
+                "Heavy physical activity"
+            ]
+        },
+        {
+            "symptom": "Cold & Runny Nose",
+            "medicine": [
+                "Cetirizine 10 mg (night)",
+                "Loratadine 10 mg (day)",
+                "Paracetamol 500 mg (if body ache/fever)",
+                "Phenylephrine drops (nasal congestion)"
+            ],
+            "diet_advice": [
+                "Warm water",
+                "Ginger tea",
+                "Honey",
+                "Vitamin C rich foods"
+            ],
+            "suggested_tests": [
+                "Allergy panel (if recurrent)"
+            ],
+            "follow_up": "If symptoms >10 days or severe",
+            "avoid": [
+                "Cold drinks",
+                "Dust exposure"
+            ]
+        },
+        {
+            "symptom": "Sinusitis",
+            "medicine": [
+                "Saline nasal spray",
+                "Steam inhalation",
+                "Amoxicillin (only if bacterial, consult doctor)"
+            ],
+            "diet_advice": [
+                "Warm fluids",
+                "Spicy foods (may help drain sinuses)"
+            ],
+            "suggested_tests": [
+                "X-ray PNS"
+            ],
+            "follow_up": "If facial pain or fever lasts >1 week",
+            "avoid": [
+                "Smoking",
+                "Dry air"
+            ]
+        },
+        {
+            "symptom": "Sore Throat",
+            "medicine": [
+                "Paracetamol 500 mg (for pain)",
+                "Throat lozenges (as per pack)",
+                "Saltwater gargle (2–3 times/day)"
+            ],
+            "diet_advice": [
+                "Warm fluids",
+                "Soft foods",
+                "Honey and lemon"
+            ],
+            "suggested_tests": [
+                "Throat swab for infection"
+            ],
+            "follow_up": "Seek care if difficulty swallowing or fever persists",
+            "avoid": [
+                "Cold foods",
+                "Smoking",
+                "Spicy foods"
+            ]
+        },
+        {
+            "symptom": "Cough (Dry)",
+            "medicine": [
+                "Dextromethorphan 10–20 mg (every 6 hrs)",
+                "Cetirizine 10 mg (at night)"
+            ],
+            "diet_advice": [
+                "Warm water",
+                "Honey",
+                "Steam inhalation"
+            ],
+            "suggested_tests": [
+                "Chest X-ray if >2 weeks"
+            ],
+            "follow_up": "If cough lasts >2 weeks",
+            "avoid": [
+                "Cold air",
+                "Dust, smoke"
+            ]
+        },
+        {
+            "symptom": "Cough (Productive)",
+            "medicine": [
+                "Guaifenesin 200 mg (every 6 hrs)",
+                "Ambroxol 30 mg (every 8 hrs)"
+            ],
+            "diet_advice": [
+                "Warm fluids",
+                "Hydration"
+            ],
+            "suggested_tests": [
+                "Chest X-ray",
+                "Sputum test"
+            ],
+            "follow_up": "If mucus is green/bloody",
+            "avoid": [
+                "Smoking",
+                "Cold air"
+            ]
+        },
+        {
+            "symptom": "Bronchitis",
+            "medicine": [
+                "Bronchodilators (if wheezing)",
+                "Cough suppressants (at night)",
+                "Anti-inflammatory meds"
+            ],
+            "diet_advice": [
+                "Plenty of fluids",
+                "Honey"
+            ],
+            "suggested_tests": [
+                "Spirometry",
+                "Chest X-ray"
+            ],
+            "follow_up": "If breathing difficulty worsens",
+            "avoid": [
+                "Smoke",
+                "Pollutants"
+            ]
+        },
+        {
+            "symptom": "Stomach Pain (Indigestion)",
+            "medicine": [
+                "Antacids (as per pack)",
+                "Omeprazole 20 mg (once daily for 3–5 days)",
+                "Pantoprazole 40 mg (once daily)"
+            ],
+            "diet_advice": [
+                "Small meals",
+                "Avoid spicy foods",
+                "Ginger tea"
+            ],
+            "suggested_tests": [
+                "H. pylori test",
+                "Ultrasound Abdomen"
+            ],
+            "follow_up": "If pain worsens or persists >1 week",
+            "avoid": [
+                "Spicy/fried foods",
+                "Alcohol"
+            ]
+        },
+        {
+            "symptom": "Acidity / Heartburn",
+            "medicine": [
+                "Antacids (as needed)",
+                "Famotidine 20 mg (twice daily)",
+                "Omeprazole 20 mg (once daily)"
+            ],
+            "diet_advice": [
+                "Eat 2–3 hours before sleep",
+                "Low-acid foods",
+                "Papaya"
+            ],
+            "suggested_tests": [
+                "Endoscopy if chronic"
+            ],
+            "follow_up": "If daily symptoms >2 weeks",
+            "avoid": [
+                "Caffeine",
+                "Smoking",
+                "Fatty foods",
+                "Chocolate"
+            ]
+        },
+        {
+            "symptom": "Vomiting",
+            "medicine": [
+                "Ondansetron 4 mg (every 8 hrs)",
+                "ORS (as per pack)",
+                "Domperidone (if prescribed)"
+            ],
+            "diet_advice": [
+                "Electrolytes",
+                "Banana",
+                "Rice water",
+                "Toast"
+            ],
+            "suggested_tests": [
+                "Electrolytes test"
+            ],
+            "follow_up": "If dehydration signs occur",
+            "avoid": [
+                "Solid foods initially",
+                "Greasy foods",
+                "Dairy"
+            ]
+        },
+        {
+            "symptom": "Diarrhea",
+            "medicine": [
+                "ORS (frequently)",
+                "Loperamide 2 mg (only for non-infectious diarrhea)",
+                "Probiotics (as per pack)",
+                "Zinc supplements"
+            ],
+            "diet_advice": [
+                "BRAT diet (Banana, Rice, Apple, Toast)",
+                "Curd/Yogurt"
+            ],
+            "suggested_tests": [
+                "Stool test"
+            ],
+            "follow_up": "If lasts >3 days or bloody stool",
+            "avoid": [
+                "Milk",
+                "Street food",
+                "High fiber initially"
+            ]
+        },
+        {
+            "symptom": "Constipation",
+            "medicine": [
+                "Psyllium husk 1–2 tsp (daily)",
+                "Lactulose 15–30 ml (night)",
+                "Polyethylene glycol / MiraLAX (as per pack)"
+            ],
+            "diet_advice": [
+                "High fiber (Oats, Prunes)",
+                "Water (3L/day)"
+            ],
+            "suggested_tests": [
+                "Thyroid test if chronic"
+            ],
+            "follow_up": "If no improvement in 1 week",
+            "avoid": [
+                "Low-fiber foods",
+                "Processed foods"
+            ]
+        },
+        {
+            "symptom": "Back Pain (Muscle Strain)",
+            "medicine": [
+                "Ibuprofen 200–400 mg (every 8 hrs)",
+                "Paracetamol 500 mg",
+                "Topical muscle relaxant gel (as per pack)"
+            ],
+            "diet_advice": [
+                "Warm compress",
+                "Adequate hydration",
+                "Calcium rich foods"
+            ],
+            "suggested_tests": [
+                "X-ray if severe",
+                "MRI Spine (if nerve pain)"
+            ],
+            "follow_up": "If pain lasts >2 weeks or radiates to legs",
+            "avoid": [
+                "Heavy lifting",
+                "Bad posture"
+            ]
+        },
+        {
+            "symptom": "Joint Pain (Arthritis/Mild)",
+            "medicine": [
+                "Ibuprofen 200–400 mg",
+                "Naproxen 250 mg (every 12 hrs)",
+                "Topical diclofenac"
+            ],
+            "diet_advice": [
+                "Omega-3 rich foods",
+                "Turmeric",
+                "Ginger"
+            ],
+            "suggested_tests": [
+                "RA factor",
+                "X-ray",
+                "Uric Acid"
+            ],
+            "follow_up": "If swelling present or morning stiffness",
+            "avoid": [
+                "High-impact activities",
+                "Processed sugar"
+            ]
+        },
+        {
+            "symptom": "Allergic Reaction (Mild)",
+            "medicine": [
+                "Cetirizine 10 mg",
+                "Loratadine 10 mg",
+                "Calamine lotion (for skin)"
+            ],
+            "diet_advice": [
+                "Avoid known allergens"
+            ],
+            "suggested_tests": [
+                "Allergy panel"
+            ],
+            "follow_up": "If symptoms worsen or breathing affects",
+            "avoid": [
+                "Trigger foods",
+                "Dust",
+                "Pets (if allergic)"
+            ]
+        },
+        {
+            "symptom": "Skin Rash (Mild)",
+            "medicine": [
+                "Hydrocortisone cream 1% (2–3 times/day)",
+                "Cetirizine 10 mg (if itchy)",
+                "Aloe vera gel"
+            ],
+            "diet_advice": [
+                "Light foods",
+                "Hydration"
+            ],
+            "suggested_tests": [
+                "Allergy test"
+            ],
+            "follow_up": "If spreads or itchy severely",
+            "avoid": [
+                "Scratching",
+                "Hot showers",
+                "Harsh soaps"
+            ]
+        },
+        {
+            "symptom": "Acne",
+            "medicine": [
+                "Benzoyl peroxide 2.5–5% (once daily)",
+                "Salicylic acid 1–2% (face wash)",
+                "Adapalene 0.1% (night, thin layer)"
+            ],
+            "diet_advice": [
+                "Low sugar diet",
+                "Hydration",
+                "Avoid dairy (if trigger)"
+            ],
+            "suggested_tests": [
+                "Hormone test (if severe)"
+            ],
+            "follow_up": "Derm visit if no improvement in 6 weeks",
+            "avoid": [
+                "Oily foods",
+                "Touching face",
+                "Heavy makeup"
+            ]
+        },
+        {
+            "symptom": "Insomnia",
+            "medicine": [
+                "Melatonin 3 mg (30 mins before sleep)",
+                "Chamomile tea (evening)"
+            ],
+            "diet_advice": [
+                "Light dinner",
+                "Avoid caffeine in evening",
+                "Milk (warm)"
+            ],
+            "suggested_tests": [
+                "Sleep study if chronic"
+            ],
+            "follow_up": "If persists >1 month",
+            "avoid": [
+                "Screens before sleep",
+                "Heavy meals",
+                "Napping"
+            ]
+        },
+        {
+            "symptom": "Dizziness",
+            "medicine": [
+                "ORS (as needed)",
+                "Meclizine 25 mg (if vertigo)",
+                "Betahistine (if prescribed)"
+            ],
+            "diet_advice": [
+                "Hydration",
+                "Small meals",
+                "Salt (if low BP)"
+            ],
+            "suggested_tests": [
+                "Blood pressure",
+                "Sugar test",
+                "ECG"
+            ],
+            "follow_up": "If fainting or persistent",
+            "avoid": [
+                "Sudden standing",
+                "Driving"
+            ]
+        },
+        {
+            "symptom": "Ear Pain",
+            "medicine": [
+                "Ibuprofen 200–400 mg",
+                "Warm compress",
+                "Ear drops (only if prescribed)"
+            ],
+            "diet_advice": [
+                "Warm fluids"
+            ],
+            "suggested_tests": [
+                "Ear exam"
+            ],
+            "follow_up": "If fever or discharge",
+            "avoid": [
+                "Using earbuds inside ear",
+                "Water entering ear"
+            ]
+        },
+        {
+            "symptom": "Eye Redness (Conjunctivitis)",
+            "medicine": [
+                "Artificial tears (every 3–4 hrs)",
+                "Antibiotic eye drops (if bacterial, consult doctor)",
+                "Cool compress"
+            ],
+            "diet_advice": [
+                "Hygiene"
+            ],
+            "suggested_tests": [
+                "Eye exam"
+            ],
+            "follow_up": "If pain or vision changes",
+            "avoid": [
+                "Screens",
+                "Rubbing eyes",
+                "Contact lenses"
+            ]
+        },
+        {
+            "symptom": "Tooth Pain",
+            "medicine": [
+                "Ibuprofen 200–400 mg",
+                "Paracetamol 500 mg",
+                "Clove oil (apply externally, small amount)"
+            ],
+            "diet_advice": [
+                "Soft foods",
+                "Avoid chewing on affected side"
+            ],
+            "suggested_tests": [
+                "Dental X-ray"
+            ],
+            "follow_up": "Dental visit required immediately",
+            "avoid": [
+                "Sugar",
+                "Very hot/cold foods"
+            ]
+        },
+        {
+            "symptom": "Chest Congestion",
+            "medicine": [
+                "Guaifenesin 200 mg (every 6 hrs)",
+                "Steam inhalation"
+            ],
+            "diet_advice": [
+                "Warm fluids"
+            ],
+            "suggested_tests": [
+                "Chest X-ray"
+            ],
+            "follow_up": "If breathing difficulty occurs",
+            "avoid": [
+                "Cold air",
+                "Smoking"
+            ]
+        },
+        {
+            "symptom": "Anxiety (Mild)",
+            "medicine": [
+                "Chamomile tea",
+                "Magnesium 200–300 mg (if deficient)",
+                "Deep breathing exercises"
+            ],
+            "diet_advice": [
+                "Avoid caffeine",
+                "Complex carbs"
+            ],
+            "suggested_tests": [
+                "Thyroid function test"
+            ],
+            "follow_up": "If persistent for weeks",
+            "avoid": [
+                "Stimulants",
+                "Alcohol"
+            ]
+        },
+        {
+            "symptom": "Fatigue",
+            "medicine": [
+                "Multivitamin (daily)",
+                "Iron 30–60 mg (ONLY if iron deficiency suspected)",
+                "Vitamin D"
+            ],
+            "diet_advice": [
+                "Balanced meals",
+                "Hydration",
+                "Leafy greens"
+            ],
+            "suggested_tests": [
+                "CBC",
+                "Thyroid test",
+                "Vitamin D/B12 levels"
+            ],
+            "follow_up": "If long-term",
+            "avoid": [
+                "Skipping meals",
+                "Sugar crashes"
+            ]
+        },
+        {
+            "symptom": "Dehydration",
+            "medicine": [
+                "ORS (regular sipping)",
+                "Electrolyte solution"
+            ],
+            "diet_advice": [
+                "Coconut water",
+                "Fruits (Watermelon)"
+            ],
+            "suggested_tests": [
+                "Electrolytes",
+                "Kidney function (if severe)"
+            ],
+            "follow_up": "If vomiting/diarrhea persists",
+            "avoid": [
+                "Caffeine",
+                "Alcohol"
+            ]
+        },
+        {
+            "symptom": "Urinary Tract Infection (UTI)",
+            "medicine": [
+                "Antibiotics (Nitrofurantoin/Ciprofloxacin - MUST consult doctor)",
+                "Cranberry juice/extract",
+                "Urinary alkalizer syrup"
+            ],
+            "diet_advice": [
+                "Drink plenty of water",
+                "Avoid caffeine/alcohol"
+            ],
+            "suggested_tests": [
+                "Urine Routine & Microscopy",
+                "Urine Culture"
+            ],
+            "follow_up": "If fever or back pain (kidney involvement)",
+            "avoid": [
+                "Holding urine",
+                "Perfumed hygiene products"
+            ]
+        },
+        {
+            "symptom": "Hypertension (High BP) - Management",
+            "medicine": [
+                "Consult Doctor for Antihypertensives (Amlodipine/Telmisartan)",
+                "Regular monitoring"
+            ],
+            "diet_advice": [
+                "DASH diet",
+                "Low salt (<5g/day)",
+                "Potassium rich foods"
+            ],
+            "suggested_tests": [
+                "Lipid Profile",
+                "ECG",
+                "Kidney function"
+            ],
+            "follow_up": "Regular follow-ups (every 3-6 months)",
+            "avoid": [
+                "Processed foods",
+                "Stress",
+                "Smoking"
+            ]
+        },
+        {
+            "symptom": "Diabetes (Type 2) - Management",
+            "medicine": [
+                "Metformin (if prescribed)",
+                "Insulin (if prescribed)",
+                "Regular sugar monitoring"
+            ],
+            "diet_advice": [
+                "Low glycemic index foods",
+                "Fiber rich foods",
+                "Portion control"
+            ],
+            "suggested_tests": [
+                "HbA1c (every 3 months)",
+                "Fasting/PP Blood Sugar"
+            ],
+            "follow_up": "Diabetologist visit regularly",
+            "avoid": [
+                "Sugary drinks",
+                "Refined carbs",
+                "Skipping meals"
+            ]
+        },
+        {
+            "symptom": "Sprain (Ankle/Wrist)",
+            "medicine": [
+                "RICE Protocol (Rest, Ice, Compression, Elevation)",
+                "Ibuprofen (for pain)",
+                "Crepe bandage"
+            ],
+            "diet_advice": [
+                "Protein for repair"
+            ],
+            "suggested_tests": [
+                "X-ray (to rule out fracture)"
+            ],
+            "follow_up": "If unable to bear weight",
+            "avoid": [
+                "Massage (initially)",
+                "Heat (initially)"
+            ]
+        },
+        {
+            "symptom": "Nausea",
+            "medicine": [
+                "Ginger supplements",
+                "Ondansetron (if severe)",
+                "Vitamin B6"
+            ],
+            "diet_advice": [
+                "Crackers",
+                "Small frequent meals",
+                "Ginger tea"
+            ],
+            "suggested_tests": [
+                "Liver function test (if chronic)"
+            ],
+            "follow_up": "If persistent or vomiting blood",
+            "avoid": [
+                "Strong smells",
+                "Greasy foods"
+            ]
+        }
+    ]
+}

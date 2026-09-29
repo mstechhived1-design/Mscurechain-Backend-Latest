@@ -1,0 +1,18 @@
+--- Incident/Controllers/incidentController.ts
++++ Incident/Controllers/incidentController.ts
+@@ -223,8 +223,12 @@
+             return res.status(403).json({ message: 'Only admins can respond to incidents' });
+         }
+ 
++        let query = {};
++        if (incidentId.match(/^[0-9a-fA-F]{24}$/)) {
++            query = { _id: incidentId };
++        } else {
++            query = { incidentId: incidentId };
++        }
+         const incident = await Incident.findOne({
+-            $or: [{ _id: incidentId }, { incidentId: incidentId }]
++            ...query
+         });
+         
+         if (!incident) {

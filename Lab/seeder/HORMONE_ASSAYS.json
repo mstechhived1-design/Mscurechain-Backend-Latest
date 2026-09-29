@@ -1,0 +1,233 @@
+{
+  "department": {
+    "name": "Hormone Assays",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Thyroid Function Tests",
+        "isProfile": true,
+        "profileDetails": {
+          "profileName": "Thyroid Profile",
+          "parameters": 3,
+          "optionalParameters": 5,
+          "priceBasic": 1200,
+          "priceExtended": 1800
+        },
+        "tests": [
+          {
+            "testCode": "HA01",
+            "testName": "Triiodothyronine",
+            "shortName": "T3",
+            "unit": "ng/mL",
+            "normalRange": "0.8–2.0",
+            "price": 500
+          },
+          {
+            "testCode": "HA02",
+            "testName": "Thyroxine",
+            "shortName": "T4",
+            "unit": "µg/dL",
+            "normalRange": "5.0–12.0",
+            "price": 500
+          },
+          {
+            "testCode": "HA03",
+            "testName": "Thyroid Stimulating Hormone",
+            "shortName": "TSH",
+            "unit": "µIU/mL",
+            "normalRange": "0.4–4.5",
+            "price": 500
+          },
+          {
+            "testCode": "HA04",
+            "testName": "Free T3",
+            "shortName": "FT3",
+            "unit": "pg/mL",
+            "normalRange": "2.3–4.2",
+            "price": 700
+          },
+          {
+            "testCode": "HA05",
+            "testName": "Free T4",
+            "shortName": "FT4",
+            "unit": "ng/dL",
+            "normalRange": "0.8–1.8",
+            "price": 700
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Reproductive Hormones",
+        "isProfile": false,
+        "notes": "Female reference ranges are menstrual phase dependent",
+        "tests": [
+          {
+            "testCode": "HA06",
+            "testName": "Follicle Stimulating Hormone",
+            "shortName": "FSH",
+            "unit": "mIU/mL",
+            "ranges": {
+              "male": "1.5–12.4",
+              "female": "Phase-based"
+            },
+            "price": 900
+          },
+          {
+            "testCode": "HA07",
+            "testName": "Luteinizing Hormone",
+            "shortName": "LH",
+            "unit": "mIU/mL",
+            "ranges": {
+              "male": "1.7–8.6",
+              "female": "Phase-based"
+            },
+            "price": 900
+          },
+          {
+            "testCode": "HA08",
+            "testName": "Estradiol",
+            "shortName": "E2",
+            "unit": "pg/mL",
+            "ranges": {
+              "male": "10–50",
+              "female": "Cycle-based"
+            },
+            "price": 1200
+          },
+          {
+            "testCode": "HA09",
+            "testName": "Progesterone",
+            "unit": "ng/mL",
+            "ranges": {
+              "male": "<1.0",
+              "female": "Phase-based"
+            },
+            "price": 1200
+          },
+          {
+            "testCode": "HA10",
+            "testName": "Prolactin",
+            "unit": "ng/mL",
+            "ranges": {
+              "male": "4.0–15.2",
+              "female": "4.8–23.3"
+            },
+            "price": 900
+          },
+          {
+            "testCode": "HA11",
+            "testName": "Testosterone",
+            "unit": "ng/dL",
+            "ranges": {
+              "male": "300–1000",
+              "female": "15–70"
+            },
+            "price": 900
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Pituitary Hormones",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "HA12",
+            "testName": "Growth Hormone",
+            "unit": "ng/mL",
+            "normalRange": "<5",
+            "price": 1500
+          },
+          {
+            "testCode": "HA13",
+            "testName": "ACTH",
+            "unit": "pg/mL",
+            "normalRange": "10–60",
+            "price": 1800
+          },
+          {
+            "testCode": "HA14",
+            "testName": "ADH (Vasopressin)",
+            "unit": "pg/mL",
+            "normalRange": "1–5",
+            "price": 2500
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Adrenal Hormones",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "HA15",
+            "testName": "Serum Cortisol (Morning)",
+            "unit": "µg/dL",
+            "normalRange": "6–23",
+            "collectionTime": "6–9 AM",
+            "price": 900
+          },
+          {
+            "testCode": "HA16",
+            "testName": "Serum Cortisol (Evening)",
+            "unit": "µg/dL",
+            "normalRange": "2–14",
+            "collectionTime": "4–6 PM",
+            "price": 900
+          },
+          {
+            "testCode": "HA17",
+            "testName": "Aldosterone",
+            "unit": "ng/dL",
+            "normalRange": "4–31",
+            "price": 2000
+          },
+          {
+            "testCode": "HA18",
+            "testName": "DHEA-S",
+            "unit": "µg/dL",
+            "normalRange": "80–560",
+            "price": 1800
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Growth & Metabolic Hormones",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "HA19",
+            "testName": "Insulin (Fasting)",
+            "unit": "µIU/mL",
+            "normalRange": "2–25",
+            "price": 900
+          },
+          {
+            "testCode": "HA20",
+            "testName": "C-Peptide",
+            "unit": "ng/mL",
+            "normalRange": "0.8–3.1",
+            "price": 1200
+          },
+          {
+            "testCode": "HA21",
+            "testName": "Leptin",
+            "unit": "ng/mL",
+            "normalRange": "Gender-based",
+            "price": 2500
+          }
+        ]
+      }
+    ]
+  }
+}

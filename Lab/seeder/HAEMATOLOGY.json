@@ -1,0 +1,269 @@
+{
+  "department": {
+    "name": "Haematology",
+    "status": true,
+    "spectrums": [
+      "Newborn",
+      "Infant",
+      "Child",
+      "Male",
+      "Female",
+      "Geriatric"
+    ],
+    "testGroups": [
+      {
+        "testGroup": "Complete Blood Count (CBC)",
+        "isProfile": true,
+        "profilePrice": 350,
+        "numberOfParameters": 15,
+        "reportFormat": "Table + Flags (L/H)",
+        "tests": [
+          {
+            "testCode": "CBC001",
+            "parameterName": "Hemoglobin",
+            "unit": "g/dL",
+            "price": 120,
+            "ranges": {
+              "male": "13.0–17.0",
+              "female": "12.0–15.0",
+              "child": "11.0–14.0",
+              "newborn": "14.0–22.0"
+            }
+          },
+          {
+            "testCode": "CBC002",
+            "parameterName": "Total RBC Count",
+            "unit": "million/cumm",
+            "price": 120,
+            "ranges": {
+              "male": "4.5–5.9",
+              "female": "4.1–5.1",
+              "child": "4.0–5.2",
+              "newborn": "4.0–6.6"
+            }
+          },
+          {
+            "testCode": "CBC003",
+            "parameterName": "Total WBC Count",
+            "unit": "cells/cumm",
+            "price": 120,
+            "ranges": {
+              "male": "4000–11000",
+              "female": "4000–11000",
+              "child": "5000–14000",
+              "newborn": "9000–30000"
+            }
+          },
+          {
+            "testCode": "CBC004",
+            "parameterName": "Platelet Count",
+            "unit": "lakhs/cumm",
+            "price": 120,
+            "ranges": {
+              "male": "1.5–4.5",
+              "female": "1.5–4.5",
+              "child": "1.5–4.5",
+              "newborn": "1.5–4.5"
+            }
+          },
+          {
+            "testCode": "CBC005",
+            "parameterName": "Hematocrit (PCV)",
+            "unit": "%",
+            "price": 120,
+            "ranges": {
+              "male": "40–52",
+              "female": "36–48",
+              "child": "35–45",
+              "newborn": "44–64"
+            }
+          }
+        ]
+      },
+
+      {
+        "testGroup": "RBC Indices",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "RBCI01",
+            "testName": "MCV",
+            "unit": "fL",
+            "normalRange": "80–100",
+            "price": 100
+          },
+          {
+            "testCode": "RBCI02",
+            "testName": "MCH",
+            "unit": "pg",
+            "normalRange": "27–33",
+            "price": 100
+          },
+          {
+            "testCode": "RBCI03",
+            "testName": "MCHC",
+            "unit": "g/dL",
+            "normalRange": "32–36",
+            "price": 100
+          },
+          {
+            "testCode": "RBCI04",
+            "testName": "RDW-CV",
+            "unit": "%",
+            "normalRange": "11.5–14.5",
+            "price": 100
+          }
+        ]
+      },
+
+      {
+        "testGroup": "WBC Differential Count (DLC)",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "DLC01",
+            "testName": "Neutrophils",
+            "unit": "%",
+            "normalRange": "40–70",
+            "price": 80
+          },
+          {
+            "testCode": "DLC02",
+            "testName": "Lymphocytes",
+            "unit": "%",
+            "normalRange": "20–40",
+            "price": 80
+          },
+          {
+            "testCode": "DLC03",
+            "testName": "Monocytes",
+            "unit": "%",
+            "normalRange": "2–8",
+            "price": 80
+          },
+          {
+            "testCode": "DLC04",
+            "testName": "Eosinophils",
+            "unit": "%",
+            "normalRange": "1–6",
+            "price": 80
+          },
+          {
+            "testCode": "DLC05",
+            "testName": "Basophils",
+            "unit": "%",
+            "normalRange": "0–1",
+            "price": 80
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Platelet Parameters",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "PLT01",
+            "testName": "MPV",
+            "unit": "fL",
+            "normalRange": "7.5–11.5",
+            "price": 120
+          },
+          {
+            "testCode": "PLT02",
+            "testName": "PDW",
+            "unit": "%",
+            "normalRange": "9–17",
+            "price": 120
+          },
+          {
+            "testCode": "PLT03",
+            "testName": "PCT",
+            "unit": "%",
+            "normalRange": "0.2–0.5",
+            "price": 120
+          }
+        ]
+      },
+
+      {
+        "testGroup": "ESR",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "ESR01",
+            "testName": "ESR (Westergren)",
+            "unit": "mm/hr",
+            "price": 120,
+            "ranges": {
+              "male": "0–15",
+              "female": "0–20",
+              "child": "0–10"
+            }
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Coagulation Profile",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "COAG01",
+            "testName": "Bleeding Time",
+            "unit": "min",
+            "normalRange": "2–7",
+            "price": 150
+          },
+          {
+            "testCode": "COAG02",
+            "testName": "Clotting Time",
+            "unit": "min",
+            "normalRange": "5–11",
+            "price": 150
+          },
+          {
+            "testCode": "COAG03",
+            "testName": "Prothrombin Time (PT)",
+            "unit": "sec",
+            "normalRange": "11–14",
+            "price": 250
+          },
+          {
+            "testCode": "COAG04",
+            "testName": "INR",
+            "unit": "ratio",
+            "normalRange": "0.8–1.2",
+            "price": 250
+          },
+          {
+            "testCode": "COAG05",
+            "testName": "APTT",
+            "unit": "sec",
+            "normalRange": "25–35",
+            "price": 300
+          }
+        ]
+      },
+
+      {
+        "testGroup": "Peripheral Smear",
+        "isProfile": false,
+        "tests": [
+          {
+            "testCode": "PS01",
+            "testName": "Peripheral Blood Smear",
+            "reportFormat": "Descriptive + Impression",
+            "price": 350
+          },
+          {
+            "testCode": "PS02",
+            "testName": "Malarial Parasite (MP)",
+            "reportFormat": "Positive / Negative",
+            "price": 250
+          }
+        ]
+      }
+    ]
+  }
+}

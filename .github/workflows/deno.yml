@@ -1,0 +1,134 @@
+name: Backend CI / Security Scan / Build / Push / Deploy
+on:
+  workflow_dispatch: 
+
+env:
+  IMAGE_REPO: ${{ secrets.ECR_BACKEND_REPOSITORY }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+jobs:
+  security:
+    name: Gitleaks + Trivy (repo fs)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+
+
+
+  build-and-push:
+    name: Build image and push to ECR
+    needs: security
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -------------------------------
+      # Validate secrets + set IMAGE
+      # -------------------------------
+      - name: Validate secrets and set IMAGE
+        run: |
+          set -e
+
+          if [ -z "${{ secrets.AWS_ACCOUNT_ID }}" ] || \
+             [ -z "${{ secrets.AWS_REGION }}" ] || \
+             [ -z "${{ secrets.ECR_BACKEND_REPOSITORY }}" ]; then
+            echo "::error::Missing required secrets"
+            exit 1
+          fi
+
+          IMAGE="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPOSITORY }}:${{ github.sha }}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+        shell: bash
+
+      # -------------------------------
+      # AWS Auth
+      # -------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        run: |
+          REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com"
+          aws ecr get-login-password --region "${{ secrets.AWS_REGION }}" \
+          | docker login --username AWS --password-stdin "$REGISTRY"
+        shell: bash
+
+      # -------------------------------
+      # Build & Push
+      # -------------------------------
+      - name: Build backend Docker image
+        run: |
+          docker build -t "$IMAGE" -f ./Dockerfile .
+        shell: bash
+
+      - name: Push backend image to ECR
+        run: |
+          docker push "$IMAGE"
+        shell: bash
+
+      # -------------------------------
+      # (Optional) Image scan
+      # -------------------------------
+      # - name: Trivy image scan
+      #   uses: aquasecurity/trivy-action@0.33.1
+      #   with:
+      #     scan-type: image
+      #     image-ref: ${{ env.IMAGE }}
+      #     severity: CRITICAL,HIGH
+      #     exit-code: 1
+
+
+  deploy:
+    name: Deploy Backend to EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          port: ${{ secrets.EC2_SSH_PORT || '22' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 30s
+
+          script: |
+            set -e
+
+            IMAGE="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_BACKEND_REPOSITORY }}:${{ github.sha }}"
+
+            echo "Deploying backend image: $IMAGE"
+
+            export AWS_REGION=${{ secrets.AWS_REGION }}
+
+            REGISTRY=$(echo $IMAGE | cut -d'/' -f1)
+
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | docker login --username AWS --password-stdin $REGISTRY
+
+            docker pull $IMAGE
+
+            APP_NAME=curechain-backend
+
+            docker rm -f $APP_NAME || true
+
+            docker run -d \
+              --restart unless-stopped \
+              --name $APP_NAME \
+              --env-file backend.env \
+              -p 5002:5002 \
+              -e NODE_ENV=production \
+              $IMAGE
