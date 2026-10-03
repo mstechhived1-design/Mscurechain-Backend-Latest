@@ -1095,7 +1095,7 @@ export const cancelTransferRequest = asyncHandler(
 export const updateAdmissionDetails = asyncHandler(
   async (req: Request, res: Response) => {
     const { id } = req.params; // Admission ID
-    const { reason, clinicalNotes } = req.body;
+    const { reason, clinicalNotes, primaryDoctor } = req.body;
     const hospital = (req as any).user.hospital;
 
     const admission = await IPDAdmission.findOne({
@@ -1107,6 +1107,7 @@ export const updateAdmissionDetails = asyncHandler(
 
     if (reason !== undefined) admission.reason = reason;
     if (clinicalNotes !== undefined) admission.clinicalNotes = clinicalNotes;
+    if (primaryDoctor !== undefined) admission.primaryDoctor = primaryDoctor;
 
     await admission.save();
 

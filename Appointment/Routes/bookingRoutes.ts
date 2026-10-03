@@ -9,7 +9,8 @@ import {
   createRazorpayOrder,
   verifyRazorpayPayment,
   renderCheckoutPage,
-  checkFollowUpEligibility
+  checkFollowUpEligibility,
+  changeAppointmentDoctor
 } from "../Controllers/bookingController.js";
 import { protect } from "../../middleware/Auth/authMiddleware.js";
 import { authorizeRoles } from "../../middleware/Auth/roleMiddleware.js";
@@ -56,6 +57,16 @@ router.patch(
     "masterhelpdesk",
   ),
   updateAppointmentStatus,
+);
+
+router.patch(
+  "/:id/doctor",
+  authorizeRoles(
+    "helpdesk",
+    "hospital-admin",
+    "masterhelpdesk",
+  ),
+  changeAppointmentDoctor
 );
 
 router.get(

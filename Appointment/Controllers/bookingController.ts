@@ -2553,3 +2553,26 @@ export const checkFollowUpEligibility = asyncHandler(
     }
   }
 );
+
+export const changeAppointmentDoctor = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { doctorId } = req.body;
+    
+    if (!doctorId) {
+      res.status(400);
+      throw new Error('Doctor ID is required');
+    }
+
+    const appointment = await Appointment.findById(id);
+    if (!appointment) {
+      res.status(404);
+      throw new Error('Appointment not found');
+    }
+
+    appointment.doctor = doctorId as any;
+    await appointment.save();
+
+    res.json({ message: 'Doctor updated successfully', appointment });
+  }
+);
