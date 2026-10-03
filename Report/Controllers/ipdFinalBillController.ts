@@ -166,9 +166,9 @@ export const getIPDFinalBill = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "Could not calculate bill breakdown for this admission." });
     }
 
-    const bookedDoctorName = (linkedAppointment?.doctor?.user as any)?.name || (linkedAppointment?.doctor as any)?.name || (admission.primaryDoctor as any)?.user?.name || "Doctor Consultation";
-    const bookedDoctorSpecialty = linkedAppointment?.doctor?.department || linkedAppointment?.doctor?.designation || (linkedAppointment?.doctor?.specialties && linkedAppointment?.doctor?.specialties[0]) || (admission.primaryDoctor as any)?.department || "Consultant";
-    const bookedDoctorFee = Number(linkedAppointment?.payment?.fee ?? linkedAppointment?.payment?.amount ?? linkedAppointment?.fee ?? linkedAppointment?.amount ?? ((admission.amount ?? 0) > 0 ? admission.amount : 0));
+    const bookedDoctorName = (admission.primaryDoctor as any)?.user?.name || (linkedAppointment?.doctor?.user as any)?.name || (linkedAppointment?.doctor as any)?.name || "Doctor Consultation";
+    const bookedDoctorSpecialty = (admission.primaryDoctor as any)?.department || linkedAppointment?.doctor?.department || linkedAppointment?.doctor?.designation || (linkedAppointment?.doctor?.specialties && linkedAppointment?.doctor?.specialties[0]) || "Consultant";
+    const bookedDoctorFee = Number((admission.primaryDoctor as any)?.consultationFee ?? linkedAppointment?.payment?.fee ?? linkedAppointment?.payment?.amount ?? linkedAppointment?.fee ?? linkedAppointment?.amount ?? ((admission.amount ?? 0) > 0 ? admission.amount : 0));
 
     // --- Build report data with 6 categories ---
     const reportData: any = {

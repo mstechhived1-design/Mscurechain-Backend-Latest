@@ -1107,7 +1107,43 @@ export const updateAdmissionDetails = asyncHandler(
 
     if (reason !== undefined) admission.reason = reason;
     if (clinicalNotes !== undefined) admission.clinicalNotes = clinicalNotes;
-    if (primaryDoctor !== undefined) admission.primaryDoctor = primaryDoctor;
+    if (primaryDoctor !== undefined) {
+      // The frontend might send the User ID instead of the DoctorProfile ID. Resolve it here to be safe.
+      let finalDoctorId = primaryDoctor;
+      try {
+        const DoctorProfileModel = (await import("../../Doctor/Models/DoctorProfile.js")).default;
+        const actualProfile = await DoctorProfileModel.findOne({
+          $or: [
+            { _id: mongoose.isValidObjectId(primaryDoctor) ? primaryDoctor : null },
+            { user: mongoose.isValidObjectId(primaryDoctor) ? primaryDoctor : null }
+          ],
+          hospital
+        });
+        if (actualProfile) finalDoctorId = actualProfile._id;
+      } catch (err) {
+        console.error("[updateAdmissionDetails] Failed to resolve doctor profile ID", err);
+      }
+
+      admission.primaryDoctor = finalDoctorId;
+      
+      // Also update the linked appointment doctor if one exists (used for Final Bill logic)
+      try {
+        const AppointmentModel = (await import("../../Appointment/Models/Appointment.js")).default;
+        await AppointmentModel.updateMany(
+          {
+            $or: [
+              { admissionId: admission._id },
+              { appointmentId: admission.admissionId }
+            ],
+            hospital
+          },
+          { $set: { doctor: finalDoctorId } }
+        );
+      } catch (err) {
+        console.error("[updateAdmissionDetails] Failed to update linked appointment doctor", err);
+      }
+
+    }
 
     await admission.save();
 
