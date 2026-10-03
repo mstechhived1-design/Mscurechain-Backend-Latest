@@ -18,7 +18,13 @@ export const initSocket = (server: HttpServer) => {
           "https://www.mscurechain.com",
           "https://mscurechain.com",
           "https://hms-frontend-green.vercel.app",
-          ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(",").map(url => url.trim()) : []),
+          ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(",").map(url => {
+              let origin = url.trim();
+              if (origin && !/^https?:\/\//i.test(origin)) {
+                  origin = `https://${origin}`;
+              }
+              return origin.replace(/\/+$/, "");
+          }) : []),
         ];
 
         if (!origin || allowedOrigins.includes(origin)) {

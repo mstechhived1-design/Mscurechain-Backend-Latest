@@ -30,7 +30,11 @@ class ExternalSupportService {
     private enabled: boolean;
 
     constructor() {
-        this.baseUrl = process.env.SUPPORT_SERVICE_BASE_URL || '';
+        let rawBaseUrl = process.env.SUPPORT_SERVICE_BASE_URL || '';
+        if (rawBaseUrl && !/^https?:\/\//i.test(rawBaseUrl)) {
+            rawBaseUrl = `https://${rawBaseUrl}`;
+        }
+        this.baseUrl = rawBaseUrl;
         this.serviceToken = process.env.SUPPORT_SERVICE_TOKEN || '';
         this.enabled = !!(this.baseUrl && this.serviceToken);
 

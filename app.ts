@@ -226,7 +226,14 @@ io.on("connection", (socket) => {
 // --- Broad CORS Configuration ---
 const allowedOrigins = (
   process.env.FRONTEND_URL || "http://localhost:3000"
-).split(",").map(o => o.trim());
+).split(",").map(o => {
+  let origin = o.trim();
+  if (origin && !/^https?:\/\//i.test(origin)) {
+    origin = `https://${origin}`;
+  }
+  // Remove trailing slashes from origin
+  return origin.replace(/\/+$/, "");
+});
 
 console.log("FRONTEND_URL from process.env:", process.env.FRONTEND_URL);
 console.log("Computed Allowed Origins:", allowedOrigins);

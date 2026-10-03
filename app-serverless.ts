@@ -45,7 +45,13 @@ const allowedOrigins: (string | undefined | null)[] = [
     process.env.FRONTEND_URL,
     // Support multiple frontend URLs (comma-separated)
     ...(process.env.FRONTEND_URL
-        ? process.env.FRONTEND_URL.split(',').map((url) => url.trim())
+        ? process.env.FRONTEND_URL.split(',').map((url) => {
+              let origin = url.trim();
+              if (origin && !/^https?:\/\//i.test(origin)) {
+                  origin = `https://${origin}`;
+              }
+              return origin.replace(/\/+$/, "");
+          })
         : []),
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
 ].filter(Boolean);
