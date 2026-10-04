@@ -272,10 +272,12 @@ export const dischargeRecordController = {
       }
 
       // Clean up: Update IPDAdmission and Delete Draft
+      // Always set dischargeDate explicitly so receipt can display the correct date
+      const finalDischargeDate = req.body.dischargeDate ? new Date(req.body.dischargeDate) : new Date();
       await (
         IPDAdmission.findOneAndUpdate(
           { admissionId: req.body.admissionId },
-          { status: "Discharged" },
+          { status: "Discharged", dischargeDate: finalDischargeDate },
         ) as any
       )
         .unscoped()

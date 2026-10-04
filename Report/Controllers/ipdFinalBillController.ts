@@ -141,7 +141,7 @@ export const getIPDFinalBill = async (req: Request, res: Response) => {
       admissionDate: admission.admissionDate,
       admissionType: admission.admissionType || "IPD-Cash",
       status: admission.status,
-      dischargeDate: admission.dischargeDate || (admission.status === "Discharged" ? (admission as any).updatedAt : null),
+      dischargeDate: admission.dischargeDate || null,
       dischargeType: admission.status === "Discharged" ? "Normal" : "",
       doctorName: (admission.primaryDoctor as any)?.user?.name || "N/A",
       wardName: bedInfo?.ward || bedInfo?.type || "N/A",

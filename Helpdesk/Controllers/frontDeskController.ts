@@ -419,19 +419,34 @@ export const registerPatient = asyncHandler(
         const endOfAdDate = new Date(adDate);
         endOfAdDate.setHours(23, 59, 59, 999);
         const doctorUserId = doctorProfile?.user || finalDoctorId;
-        const isLeave = await (Leave.findOne({
-          requester: doctorUserId,
-          status: "approved",
-          $or: [{ startDate: { $lte: endOfAdDate }, endDate: { $gte: startOfAdDate } }],
-        }) as any).unscoped();
+        const isLeave = await (
+          Leave.findOne({
+            requester: doctorUserId,
+            status: "approved",
+            $or: [
+              {
+                startDate: { $lte: endOfAdDate },
+                endDate: { $gte: startOfAdDate },
+              },
+            ],
+          }) as any
+        ).unscoped();
         const isMasterLeave = await MasterDoctorLeave.findOne({
           doctor: doctorUserId,
           status: "approved",
-          $or: [{ startDate: { $lte: endOfAdDate }, endDate: { $gte: startOfAdDate } }],
+          $or: [
+            {
+              startDate: { $lte: endOfAdDate },
+              endDate: { $gte: startOfAdDate },
+            },
+          ],
         });
 
         if (isLeave || isMasterLeave) {
-          throw new ApiError(400, "Doctor is on approved leave on this date. Appointments cannot be booked.");
+          throw new ApiError(
+            400,
+            "Doctor is on approved leave on this date. Appointments cannot be booked.",
+          );
         }
 
         const existingActiveBooking = await (
@@ -454,22 +469,27 @@ export const registerPatient = asyncHandler(
 
         // 🔐 LEAVE CHECK: Block bookings if doctor is on leave
         const [onOldLeave, onMasterLeave] = await Promise.all([
-          (Leave.findOne({
-            requester: doctorProfile.user,
-            status: "approved",
-            startDate: { $lte: endOfDay },
-            endDate: { $gte: startOfDay },
-          }) as any).unscoped(),
+          (
+            Leave.findOne({
+              requester: doctorProfile.user,
+              status: "approved",
+              startDate: { $lte: endOfDay },
+              endDate: { $gte: startOfDay },
+            }) as any
+          ).unscoped(),
           MasterDoctorLeave.findOne({
             doctor: doctorProfile.user,
             status: "approved",
             startDate: { $lte: endOfDay },
             endDate: { $gte: startOfDay },
-          })
+          }),
         ]);
 
         if (onOldLeave || onMasterLeave) {
-          throw new ApiError(400, "Doctor is on leave today. Cannot book appointment.");
+          throw new ApiError(
+            400,
+            "Doctor is on leave today. Cannot book appointment.",
+          );
         }
       }
       let appointment: any = null;
@@ -479,7 +499,7 @@ export const registerPatient = asyncHandler(
           visitTypeInput.toUpperCase() === "IPD"
             ? "IPD"
             : visitTypeInput.toUpperCase() === "OPD" ||
-              visitTypeInput.toLowerCase() === "offline"
+                visitTypeInput.toLowerCase() === "offline"
               ? "OPD"
               : "APT";
 
@@ -492,7 +512,13 @@ export const registerPatient = asyncHandler(
 
         const finalReceiptNumber =
           receiptNumber ||
-          (finalPaymentStatus === "Paid" ? await generateReceiptNumber(hospitalId, appTypePrefix as any, session) : undefined);
+          (finalPaymentStatus === "Paid"
+            ? await generateReceiptNumber(
+                hospitalId,
+                appTypePrefix as any,
+                session,
+              )
+            : undefined);
 
         appointment = new Appointment({
           appointmentId: transactionId,
@@ -555,24 +581,28 @@ export const registerPatient = asyncHandler(
                 referenceId: appointment._id,
                 date: new Date(),
                 paymentMode: finalPaymentMethod.toLowerCase(),
-                paymentDetails: finalPaymentMethod.toLowerCase() === "mixed" && paymentInput.paymentDetails ? {
-                  cash: Number(paymentInput.paymentDetails.cash) || 0,
-                  upi: Number(paymentInput.paymentDetails.upi) || 0,
-                  card: Number(paymentInput.paymentDetails.card) || 0,
-                } : {
-                  cash:
-                    finalPaymentMethod.toLowerCase() === "cash"
-                      ? finalPaymentAmount
-                      : 0,
-                  upi:
-                    finalPaymentMethod.toLowerCase() === "upi"
-                      ? finalPaymentAmount
-                      : 0,
-                  card:
-                    finalPaymentMethod.toLowerCase() === "card"
-                      ? finalPaymentAmount
-                      : 0,
-                },
+                paymentDetails:
+                  finalPaymentMethod.toLowerCase() === "mixed" &&
+                  paymentInput.paymentDetails
+                    ? {
+                        cash: Number(paymentInput.paymentDetails.cash) || 0,
+                        upi: Number(paymentInput.paymentDetails.upi) || 0,
+                        card: Number(paymentInput.paymentDetails.card) || 0,
+                      }
+                    : {
+                        cash:
+                          finalPaymentMethod.toLowerCase() === "cash"
+                            ? finalPaymentAmount
+                            : 0,
+                        upi:
+                          finalPaymentMethod.toLowerCase() === "upi"
+                            ? finalPaymentAmount
+                            : 0,
+                        card:
+                          finalPaymentMethod.toLowerCase() === "card"
+                            ? finalPaymentAmount
+                            : 0,
+                      },
               },
             ],
             { session },
@@ -654,7 +684,9 @@ export const getPatients = asyncHandler(
     } else if (type === "opd") {
       baseCriteria = { hospitals: hospitalId, _id: { $nin: resolvedUserIds } };
     } else {
-      baseCriteria = { $or: [{ hospitals: hospitalId }, { _id: { $in: resolvedUserIds } }] };
+      baseCriteria = {
+        $or: [{ hospitals: hospitalId }, { _id: { $in: resolvedUserIds } }],
+      };
     }
 
     let query: any = {};
@@ -725,8 +757,12 @@ export const getPatients = asyncHandler(
           name: sanitizePatientName(p.name),
           honorific: profile?.honorific || (p as any).honorific || "",
           mrn: (profile as any)?.mrn || (p as any).mrn || "N/A",
-          mobile: p.mobile || (profile as any)?.contactNumber || (profile as any)?.mobile || "--",
-          age: (age !== "--") ? age : "--",
+          mobile:
+            p.mobile ||
+            (profile as any)?.contactNumber ||
+            (profile as any)?.mobile ||
+            "--",
+          age: age !== "--" ? age : "--",
           gender: (profile as any)?.gender || p.gender || "--",
           dob: profile?.dob || (p as any).dob,
           profile,
@@ -734,10 +770,10 @@ export const getPatients = asyncHandler(
           activeConsultation: !!activeEngagement,
           activeAdmission: isIPD
             ? await IPDAdmission.findOne({
-              hospital: hospitalId,
-              status: { $in: ["Active", "Discharge Initiated"] },
-              $or: [{ patient: p._id }, { patient: (profile as any)?._id }],
-            }).select("_id admissionId admissionType")
+                hospital: hospitalId,
+                status: { $in: ["Active", "Discharge Initiated"] },
+                $or: [{ patient: p._id }, { patient: (profile as any)?._id }],
+              }).select("_id admissionId admissionType")
             : null,
         };
       }),
@@ -760,9 +796,11 @@ export const getPatientById = asyncHandler(
     let user: any = null;
     let profile: any = null;
     if (mongoose.Types.ObjectId.isValid(patientId)) {
-      user = await (Patient.findOne({
-        _id: patientId,
-      }) as any)
+      user = await (
+        Patient.findOne({
+          _id: patientId,
+        }) as any
+      )
         .unscoped()
         .select("-password -refreshTokens");
       if (user) {
@@ -819,26 +857,28 @@ export const getPatientById = asyncHandler(
       visitQuery.hospital = hospitalId;
     }
     const [lastVisit, visitCount] = await Promise.all([
-      Appointment.findOne(visitQuery).sort({
-        date: -1,
-        createdAt: -1,
-      }).populate({
-        path: "doctor",
-        populate: { path: "user", select: "name" },
-      }),
+      Appointment.findOne(visitQuery)
+        .sort({
+          date: -1,
+          createdAt: -1,
+        })
+        .populate({
+          path: "doctor",
+          populate: { path: "user", select: "name" },
+        }),
       Appointment.countDocuments(visitQuery),
     ]);
     const activeAdmission = hospitalId
       ? await (
-        IPDAdmission.findOne({
-          hospital: hospitalId,
-          $or: [{ patient: user._id }, { patient: profile?._id }],
-          status: { $in: ["Active", "Discharge Initiated"] },
-        }) as any
-      )
-        .unscoped()
-        .select("_id admissionId status")
-        .sort({ createdAt: -1 })
+          IPDAdmission.findOne({
+            hospital: hospitalId,
+            $or: [{ patient: user._id }, { patient: profile?._id }],
+            status: { $in: ["Active", "Discharge Initiated"] },
+          }) as any
+        )
+          .unscoped()
+          .select("_id admissionId status")
+          .sort({ createdAt: -1 })
       : null;
     const activeConsultation = await Appointment.findOne({
       patient: user._id,
@@ -871,7 +911,9 @@ export const lookupGuardianByMobile = asyncHandler(
     const hospitalId = req.user?.hospital;
     const { mobile } = req.query;
     if (!mobile || typeof mobile !== "string" || mobile.trim().length < 10) {
-      return res.status(400).json({ success: false, message: "Valid mobile number required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Valid mobile number required" });
     }
     const cleanMobile = mobile.trim();
     const invalidValues = ["", "N/A", "n/a", "NA", "na", "null", "undefined"];
@@ -885,8 +927,16 @@ export const lookupGuardianByMobile = asyncHandler(
 
     if (apptWithGuardian && apptWithGuardian.guardianName) {
       const gName = apptWithGuardian.guardianName.trim();
-      const gRelation = apptWithGuardian.guardianRelation && !invalidValues.includes(apptWithGuardian.guardianRelation.trim()) ? apptWithGuardian.guardianRelation.trim() : "";
-      const dRef = apptWithGuardian.doctorReference && !invalidValues.includes(apptWithGuardian.doctorReference.trim()) ? apptWithGuardian.doctorReference.trim() : "";
+      const gRelation =
+        apptWithGuardian.guardianRelation &&
+        !invalidValues.includes(apptWithGuardian.guardianRelation.trim())
+          ? apptWithGuardian.guardianRelation.trim()
+          : "";
+      const dRef =
+        apptWithGuardian.doctorReference &&
+        !invalidValues.includes(apptWithGuardian.doctorReference.trim())
+          ? apptWithGuardian.doctorReference.trim()
+          : "";
 
       if (!invalidValues.includes(gName)) {
         return res.json({
@@ -909,8 +959,18 @@ export const lookupGuardianByMobile = asyncHandler(
 
     if (profileWithGuardian && profileWithGuardian.GuardianName) {
       const gName = profileWithGuardian.GuardianName.trim();
-      const gRelation = profileWithGuardian.GuardianRelation && !invalidValues.includes(profileWithGuardian.GuardianRelation.trim()) ? profileWithGuardian.GuardianRelation.trim() : "";
-      const dRef = (profileWithGuardian as any).doctorReference && !invalidValues.includes((profileWithGuardian as any).doctorReference.trim()) ? (profileWithGuardian as any).doctorReference.trim() : "";
+      const gRelation =
+        profileWithGuardian.GuardianRelation &&
+        !invalidValues.includes(profileWithGuardian.GuardianRelation.trim())
+          ? profileWithGuardian.GuardianRelation.trim()
+          : "";
+      const dRef =
+        (profileWithGuardian as any).doctorReference &&
+        !invalidValues.includes(
+          (profileWithGuardian as any).doctorReference.trim(),
+        )
+          ? (profileWithGuardian as any).doctorReference.trim()
+          : "";
 
       if (!invalidValues.includes(gName)) {
         return res.json({
@@ -928,7 +988,7 @@ export const lookupGuardianByMobile = asyncHandler(
       success: true,
       found: false,
     });
-  }
+  },
 );
 
 export const updatePatient = asyncHandler(
@@ -1014,7 +1074,8 @@ export const updatePatient = asyncHandler(
         const today = new Date();
         let calculatedYears = today.getFullYear() - parsedDob.getFullYear();
         const m = today.getMonth() - parsedDob.getMonth();
-        if (m < 0 || (m === 0 && today.getDate() < parsedDob.getDate())) calculatedYears--;
+        if (m < 0 || (m === 0 && today.getDate() < parsedDob.getDate()))
+          calculatedYears--;
         targetAge = Math.max(0, calculatedYears);
       }
     } else if (age !== undefined) {
@@ -1039,7 +1100,10 @@ export const updatePatient = asyncHandler(
     await user.save();
 
     let profile = await (
-      PatientProfile.findOne({ user: actualPatientUserId, hospital: hospitalId }) as any
+      PatientProfile.findOne({
+        user: actualPatientUserId,
+        hospital: hospitalId,
+      }) as any
     ).unscoped();
     if (!profile) {
       profile = new PatientProfile({
@@ -1166,9 +1230,7 @@ export const getPatientVisitHistory = asyncHandler(
     if (mongoose.Types.ObjectId.isValid(patientId)) {
       user = await (Patient.findById(patientId) as any).unscoped().lean();
       if (user) {
-        profile = await (
-          PatientProfile.findOne({ user: user._id }) as any
-        )
+        profile = await (PatientProfile.findOne({ user: user._id }) as any)
           .unscoped()
           .lean();
       } else {
@@ -1176,7 +1238,9 @@ export const getPatientVisitHistory = asyncHandler(
           .unscoped()
           .lean();
         if (profile) {
-          user = await (Patient.findById(profile.user) as any).unscoped().lean();
+          user = await (Patient.findById(profile.user) as any)
+            .unscoped()
+            .lean();
         }
       }
     }
@@ -1192,7 +1256,9 @@ export const getPatientVisitHistory = asyncHandler(
     const profileId = profile?._id;
     const patientMrn = profile?.mrn || user?.mrn;
 
-    console.log(`[getPatientVisitHistory] Resolved: User=${userId} | Profile=${profileId} | MRN=${patientMrn}`);
+    console.log(
+      `[getPatientVisitHistory] Resolved: User=${userId} | Profile=${profileId} | MRN=${patientMrn}`,
+    );
 
     // 2. Fetch from BOTH Appointment (Offline) and MobileAppointment (Online)
     const appointmentConditions: any[] = [];
@@ -1203,7 +1269,10 @@ export const getPatientVisitHistory = asyncHandler(
     if (profileId) appointmentConditions.push({ patient: profileId });
     if (patientMrn) appointmentConditions.push({ mrn: patientMrn });
 
-    console.log(`[getPatientVisitHistory] Querying with conditions:`, JSON.stringify(appointmentConditions));
+    console.log(
+      `[getPatientVisitHistory] Querying with conditions:`,
+      JSON.stringify(appointmentConditions),
+    );
 
     const mobileConditions: any[] = [];
     if (profileId) mobileConditions.push({ patient: profileId });
@@ -1221,29 +1290,34 @@ export const getPatientVisitHistory = asyncHandler(
           select: "name mobile mrn age gender",
           options: { unscoped: true },
         })
-        .populate({ path: "doctor", populate: { path: "user", select: "name" } })
+        .populate({
+          path: "doctor",
+          populate: { path: "user", select: "name" },
+        })
         // 🗓️ Sort by updatedAt (payment is applied on update), fall back to date (scheduled)
         .sort({ updatedAt: -1, date: -1 })
         .lean(),
 
       mobileConditions.length > 0
         ? (
-          MobileAppointment.find({
-            $or: mobileConditions,
-          }) as any
-        )
-          .unscoped()
-          .populate({
-            path: "doctor",
-            populate: { path: "user", select: "name" },
-          })
-          // 🗓️ Sort by updatedAt consistently with offline visits
-          .sort({ updatedAt: -1, date: -1 })
-          .lean()
+            MobileAppointment.find({
+              $or: mobileConditions,
+            }) as any
+          )
+            .unscoped()
+            .populate({
+              path: "doctor",
+              populate: { path: "user", select: "name" },
+            })
+            // 🗓️ Sort by updatedAt consistently with offline visits
+            .sort({ updatedAt: -1, date: -1 })
+            .lean()
         : Promise.resolve([]),
     ]);
 
-    console.log(`[getPatientVisitHistory] Found ${offlineVisits.length} offline and ${onlineVisits.length} online visits`);
+    console.log(
+      `[getPatientVisitHistory] Found ${offlineVisits.length} offline and ${onlineVisits.length} online visits`,
+    );
 
     // 3. Normalize MobileAppointments to match Appointment structure
     const normalizedOnline = onlineVisits.map((v: any) => ({
@@ -1267,8 +1341,8 @@ export const getPatientVisitHistory = asyncHandler(
     // This prevents OPD appointments with old scheduled dates from sinking below newer ones.
     const getSortDate = (v: any) =>
       new Date(v.updatedAt || v.createdAt || v.date || 0).getTime();
-    const allVisits = [...offlineVisits, ...normalizedOnline].sort((a, b) =>
-      getSortDate(b) - getSortDate(a)
+    const allVisits = [...offlineVisits, ...normalizedOnline].sort(
+      (a, b) => getSortDate(b) - getSortDate(a),
     );
 
     const formattedVisits = allVisits.map((v: any) => ({
@@ -1281,11 +1355,7 @@ export const getPatientVisitHistory = asyncHandler(
         "Unknown",
       doctorName: v.doctor?.user?.name || v.doctorName || "Pending Setup",
       mrn:
-        v.mrn ||
-        v.patient?.mrn ||
-        v.patientDetails?.mrn ||
-        patientMrn ||
-        "N/A",
+        v.mrn || v.patient?.mrn || v.patientDetails?.mrn || patientMrn || "N/A",
       age: v.patientDetails?.age || v.patient?.age || profile?.age || "--",
       gender:
         v.patientDetails?.gender ||
@@ -1296,8 +1366,8 @@ export const getPatientVisitHistory = asyncHandler(
     }));
 
     res.json(formattedVisits);
-  });
-
+  },
+);
 
 export const getActiveAppointments = asyncHandler(
   async (req: HelpdeskRequest, res: Response) => {
@@ -1345,9 +1415,9 @@ export const getPatientIPDAdmissions = asyncHandler(
       const user = await (Patient.findById(patientId) as any).unscoped();
       if (!user) throw new ApiError(404, "Patient not found");
       const hospitalIdStr = hospitalId.toString();
-      const isHospitalPresent = user.hospitals?.some(
-        (h: any) => h.toString() === hospitalIdStr,
-      ) || user.hospital?.toString() === hospitalIdStr;
+      const isHospitalPresent =
+        user.hospitals?.some((h: any) => h.toString() === hospitalIdStr) ||
+        user.hospital?.toString() === hospitalIdStr;
 
       const hasProfile = await (
         PatientProfile.findOne({ user: patientId, hospital: hospitalId }) as any
@@ -1375,18 +1445,21 @@ export const getPatientIPDAdmissions = asyncHandler(
       .populate("hospital", "name address phone email")
       .populate("patient", "name email phone")
       .select(
-        "admissionId admissionDate admissionType status amount paymentMethod paymentStatus vitals diet clinicalNotes symptoms reason chiefComplaint",
+        "admissionId admissionDate admissionType status amount paymentMethod paymentStatus vitals diet clinicalNotes symptoms reason chiefComplaint dischargeDate createdAt updatedAt",
       )
       .sort({ admissionDate: -1 })
       .lean();
-    
+
     // Log for debugging field name mismatch
-    console.log("[getPatientIPDAdmissions] Fetched admissions:", admissions.map(a => ({
-      id: a.admissionId,
-      reason: a.reason,
-      symptoms: a.symptoms,
-      chiefComplaint: a.chiefComplaint
-    })));
+    console.log(
+      "[getPatientIPDAdmissions] Fetched admissions:",
+      admissions.map((a) => ({
+        id: a.admissionId,
+        reason: a.reason,
+        symptoms: a.symptoms,
+        chiefComplaint: a.chiefComplaint,
+      })),
+    );
 
     res.json({ admissions });
   },
