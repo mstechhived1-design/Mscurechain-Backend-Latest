@@ -1881,6 +1881,16 @@ export const mapOrderToSample = (o: any) => {
     resolvedDoctorName = o.invoiceId.refDoctor;
   }
 
+  const resolveMrn = (patientObj: any, profileObj: any, orderObj: any) => {
+    const candidates = [profileObj?.mrn, patientObj?.mrn, orderObj?.mrn, orderObj?.mrnNumber];
+    for (const c of candidates) {
+      if (c && typeof c === 'string' && !/^[0-9a-fA-F]{24}$/.test(c)) {
+        return c;
+      }
+    }
+    return undefined;
+  };
+
   // Determine patient details
   const patientDetails = o.walkInPatient
     ? {
@@ -1890,6 +1900,7 @@ export const mapOrderToSample = (o: any) => {
         mobile: o.walkInPatient.mobile,
         refDoctor: resolvedDoctorName || "Self",
         patientId: o.walkInPatient._id,
+        mrn: resolveMrn(null, null, o.walkInPatient),
       }
     : {
         name: o.patient?.name || "Walk-in Patient",
@@ -1900,6 +1911,7 @@ export const mapOrderToSample = (o: any) => {
         mobile: o.patient?.mobile || "N/A",
         refDoctor: resolvedDoctorName || "",
         patientId: o.patient?._id,
+        mrn: resolveMrn(o.patient, o.patientProfile, o),
         bedInfo: bedInfo // Injected bed info
       };
 
@@ -2223,10 +2235,22 @@ export const getLabOrder = async (req: Request, res: Response) => {
       }),
     );
 
-    // Fetch PatientProfile for age/gender if not on User
+    // Fetch PatientProfile for age/gender/MRN if not on User
     const profile = order.patient?._id
-      ? await PatientProfile.findOne({ user: order.patient._id }).lean()
+      ? await (PatientProfile.findOne({ user: order.patient._id }) as any).unscoped().lean()
       : null;
+
+    const resolveMrnVal = (pObj: any, profObj: any, ordObj: any) => {
+      const candidates = [profObj?.mrn, pObj?.mrn, ordObj?.mrn, ordObj?.mrnNumber];
+      for (const c of candidates) {
+        if (c && typeof c === 'string' && !/^[0-9a-fA-F]{24}$/.test(c)) {
+          return c;
+        }
+      }
+      return undefined;
+    };
+
+    const resolvedMrnNumber = resolveMrnVal(order.patient, profile, order);
 
     const calculateAge = (dob: any) => {
       if (!dob) return 0;
@@ -2248,6 +2272,7 @@ export const getLabOrder = async (req: Request, res: Response) => {
           ? `LAB-${order.invoiceId._id?.toString().slice(-6).toUpperCase() || order.invoiceId.toString().slice(-6).toUpperCase()}`
           : `ORDER-${order._id.toString().slice(-6).toUpperCase()}`,
       sampleId: order.sampleId || order.orderNumber || order._id.toString().slice(-6).toUpperCase(),
+      mrn: resolvedMrnNumber,
       patientDetails: {
         name: order.patient?.name || "Walk-in Patient",
         age:
@@ -2255,6 +2280,8 @@ export const getLabOrder = async (req: Request, res: Response) => {
         gender: order.patient?.gender || profile?.gender || "Other",
         mobile: order.patient?.mobile || "N/A",
         refDoctor: resolvedDoctorName || "Self",
+        mrn: resolvedMrnNumber,
+        patientId: order.patient?._id,
       },
       doctor: {
         _id: order.doctor?._id || order.doctor,

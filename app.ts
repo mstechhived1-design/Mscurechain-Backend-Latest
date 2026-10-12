@@ -60,6 +60,7 @@ import attendanceRoutes from "./Staff/Routes/attendanceRoutes.js";
 import hrRoutes from "./HR/Routes/hrRoutes.js";
 import announcementRoutes from "./Notification/Routes/announcementRoutes.js";
 import recruitmentRoutes from "./Recruitment/Routes/recruitmentRoutes.js";
+import whatsappRoutes from "./WhatsApp/Routes/whatsappRoutes.js";
 
 import {
   emergencyAuthRoutes,
@@ -269,8 +270,8 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json({ limit: "5mb" }));
-app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
 
 // Task 6 — STRICT CSP: Protect against XSS by disallowing inline scripts and eval
@@ -413,6 +414,7 @@ app.use("/api/admin/tv-displays", tvDisplayRoutes);
 app.use("/api/super-admin", superAdminRoutes);
 app.use("/api/admin", superAdminRoutes); // New path matching frontend
 app.use("/api/hospital-admin", hospitalAdminRoutes); // New path matching frontend
+app.use("/api/hospital/:hospitalId/whatsapp", whatsappRoutes);
 app.use("/api/hospital", hospitalAdminRoutes); // Legacy support
 app.use("/api/hr", hrRoutes);
 app.use("/api/recruitment", recruitmentRoutes);

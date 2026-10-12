@@ -1937,7 +1937,8 @@ export const getAppointments = asyncHandler(
       let query: any = {};
       if (role === "patient") query.patient = _id;
       else if (role === "doctor") {
-        const dp = await (DoctorProfile.findOne({ user: _id }) as any);
+        const dpQuery = DoctorProfile.findOne({ user: _id });
+        const dp = await ((dpQuery as any).unscoped ? (dpQuery as any).unscoped() : dpQuery);
         if (!dp) {
           // SECURITY: Prevent returning all appointments if doctor profile is missing
           query.doctor = new mongoose.Types.ObjectId();

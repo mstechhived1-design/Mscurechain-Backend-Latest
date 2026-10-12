@@ -122,6 +122,8 @@ router.use(
     "nurse",
     "hr",
     "pharma-owner", // allow pharmacy to read nurses list
+    "lab",
+    "lab-technician",
   ),
 );
 

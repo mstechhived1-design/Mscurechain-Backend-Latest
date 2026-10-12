@@ -18,7 +18,7 @@ interface CreateNotificationParams {
 }
 
 import User from "../../Auth/Models/User.js";
-import { io as globalIo } from "../../config/socket.js";
+import { getIO } from "../../config/socket.js";
 
 // Helper to create notification (Internal Use)
 export const createNotification = async (
@@ -46,8 +46,8 @@ export const createNotification = async (
       relatedId,
     });
 
-    // Get IO instance efficiently
-    const io = (req as any)?.io || globalIo;
+    // Get IO instance efficiently dynamically (so background cron tasks have active socket access)
+    const io = (req as any)?.io || getIO();
 
     // Emit Socket Event
     if (io) {
@@ -58,18 +58,28 @@ export const createNotification = async (
         user = (await (Patient.findById(recipient) as any).unscoped().select("role").lean()) as any;
       }
 
-      if (user) {
-        const userRoom = `${(user as any).role}_${recipient.toString()}`;
+      const notifPayload = {
+        _id: notification._id.toString(),
+        type,
+        message,
+        relatedId: relatedId ? relatedId.toString() : undefined,
+        sender: sender ? sender.toString() : undefined,
+        createdAt: notification.createdAt,
+        isRead: false,
+      };
 
-        io.to(userRoom).emit("notification:new", {
-          _id: notification._id.toString(),
-          type,
-          message,
-          relatedId: relatedId ? relatedId.toString() : undefined,
-          sender: sender ? sender.toString() : undefined,
-          createdAt: notification.createdAt,
-          isRead: false,
-        });
+      if (user) {
+        const userRole = (user as any).role || "patient";
+        const userRoom = `${userRole}_${recipient.toString()}`;
+        io.to(userRoom).emit("notification:new", notifPayload);
+      }
+      // Also emit to direct recipient ID room
+      io.to(recipient.toString()).emit("notification:new", notifPayload);
+
+      // Also emit to hospital room for real-time dashboard updates
+      const hospId = hospital || (req as any)?.user?.hospital;
+      if (hospId) {
+        io.to(`hospital_${hospId.toString()}`).emit("notification:new", notifPayload);
       }
     }
 

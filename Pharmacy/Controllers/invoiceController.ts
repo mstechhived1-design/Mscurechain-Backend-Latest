@@ -217,6 +217,29 @@ export const getInvoiceById = async (req: PharmaRequest, res: Response) => {
       return res.status(404).json({ message: "Invoice not found" });
     }
 
+    if (!invoice.mrn || invoice.mrn === "N/A" || /^[0-9a-fA-F]{24}$/.test(invoice.mrn)) {
+      try {
+        const User = mongoose.model("User");
+        const PatientProfile = mongoose.model("PatientProfile");
+        if (invoice.customerPhone) {
+          const cleanPhone = invoice.customerPhone.replace(/[^0-9]/g, "").slice(-10);
+          const patientUser: any = await User.findOne({
+            $or: [{ mobile: invoice.customerPhone }, { mobile: cleanPhone }]
+          }).lean();
+          if (patientUser) {
+            const profile: any = await (PatientProfile.findOne({ user: patientUser._id }) as any).unscoped().lean();
+            if (profile?.mrn) {
+              (invoice as any).mrn = profile.mrn;
+            } else if (patientUser.mrn) {
+              (invoice as any).mrn = patientUser.mrn;
+            }
+          }
+        }
+      } catch (e) {
+        // ignore fallback errors
+      }
+    }
+
     res.json({ success: true, data: invoice });
   } catch (error: any) {
     res.status(500).json({ message: error.message });

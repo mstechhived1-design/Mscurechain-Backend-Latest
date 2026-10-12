@@ -11,6 +11,7 @@ import DischargeRecord from "../Discharge/Models/DischargeRecord.js";
 import mongoose from "mongoose";
 import ReminderConfiguration from "../Hospital/Models/ReminderConfiguration.js";
 import PatientProfile from "../Patient/Models/PatientProfile.js";
+import { safeEmit } from "../config/socket.js";
 
 /**
  * Service to process follow-up reminders
@@ -119,7 +120,7 @@ async function processHospitalOpdReminders(
     }) as any
   )
     .unscoped()
-    .populate({ path: "patient", select: "name", options: { unscoped: true } });
+    .populate({ path: "patient", select: "name mobile phone user", options: { unscoped: true } });
 
   console.log(
     `[ReminderService] Hospital ${hospitalId}: Found ${prescriptions.length} potential prescriptions matching base criteria.`,
@@ -199,6 +200,17 @@ async function processHospitalOpdReminders(
       }
 
       await Promise.all(notificationPromises);
+
+      // 🛑 AUTOMATED EXTERNAL WHATSAPP DISPATCH DISABLED:
+      // Prevents unsolicited messages and protects linked devices from Meta spam restrictions.
+      // Notifications are delivered safely in-app and via Socket.IO.
+      safeEmit(`hospital_${hospitalId}`, "reminder:opd_processed", {
+        type: "opd_followup_reminder",
+        patientName: (prescription.patient as any)?.name || "Patient",
+        followUpDate: prescription.followUpDate,
+        prescriptionId: prescription._id,
+      });
+
       (prescription as any).followUpRemindersSent = currentSlotIndex + 1;
       await prescription.save();
     }),
@@ -333,6 +345,16 @@ export const processDischargeFollowUpReminders = async () => {
                 relatedId: record._id,
               });
 
+              // 🛑 AUTOMATED EXTERNAL WHATSAPP DISPATCH DISABLED:
+              // Prevents unsolicited messages and protects linked devices from Meta spam restrictions.
+              // Notifications are delivered safely in-app and via Socket.IO.
+              safeEmit(`hospital_${hospitalId}`, "reminder:discharge_processed", {
+                type: "ipd_discharge_followup_reminder",
+                patientName: profile?.name || "Patient",
+                followUpDate: record.followUpDate,
+                dischargeId: record._id,
+              });
+
               (record as any).followUpRemindersSent = targetRemindersSent;
               await record.save();
             }
@@ -459,18 +481,23 @@ export const processVitalsMonitoringEscalation = async () => {
 };
 
 /**
+ * Service to process Token & Follow-up Expiry Warnings via WhatsApp
+ * (Automated WhatsApp alerts removed — only manual/button actions retained)
+ */
+export const processTokenExpiryWhatsAppAlerts = async () => {
+  // Automated WhatsApp token expiry alerts disabled
+};
+
+/**
  * Initialize the reminder service with a periodic interval
  */
 export const initReminderService = () => {
   console.log(
-    "[ReminderService] Initializing automated follow-up reminders...",
+    "[ReminderService] Initializing background checks (automated patient WhatsApp alerts & follow-up crons removed)...",
   );
 
-  // Check every 5 minutes to reduce load
-  const INTERVAL = 5 * 60 * 1000;
-
-  setInterval(processFollowUpReminders, INTERVAL);
-  setInterval(processDischargeFollowUpReminders, INTERVAL); // IPD Follow-ups
+  // Automated follow-ups and WhatsApp token expiry crons removed
+  // Keep internal license expiry check and vitals monitoring escalation
   setInterval(processLicenseExpiryAlerts, 24 * 60 * 60 * 1000); // Check once a day
   setInterval(processVitalsMonitoringEscalation, 5 * 60 * 1000); // Check every 5 mins
 };
@@ -490,8 +517,8 @@ export const processLicenseExpiryAlerts = async () => {
           $ne: null,
         },
       }) as any)
-        .unscoped()
-        .populate({ path: "user", options: { unscoped: true } });
+      .unscoped()
+      .populate({ path: "user", options: { unscoped: true } });
 
     for (const profile of expiringStaff) {
       await processSingleProfileExpiry(profile, "staff");
@@ -502,8 +529,8 @@ export const processLicenseExpiryAlerts = async () => {
       DoctorProfile.find({
         registrationExpiryDate: { $exists: true, $ne: null },
       }) as any)
-        .unscoped()
-        .populate({ path: "user", options: { unscoped: true } });
+      .unscoped()
+      .populate({ path: "user", options: { unscoped: true } });
 
     for (const profile of expiringDoctors) {
       await processSingleProfileExpiry(profile, "doctor");
