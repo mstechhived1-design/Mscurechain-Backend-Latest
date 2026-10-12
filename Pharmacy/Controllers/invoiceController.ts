@@ -386,27 +386,39 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
         }
 
         if (batchSupplier) {
-          const sysAdjBatch = await Batch.create(
-            [
-              {
-                product: product._id,
-                batchNo: "SYSTEM_ADJ",
-                expiry: fallbackExpiry,
+          // Use upsert to avoid E11000 duplicate key error when a SYSTEM_ADJ batch
+          // already exists for this product+pharmacy. If it exists, increment
+          // qtyReceived and qtySold; otherwise create it fresh.
+          const sysAdjBatch = await Batch.findOneAndUpdate(
+            {
+              product: product._id,
+              batchNo: "SYSTEM_ADJ",
+              pharmacy: pharmacyId,
+            },
+            {
+              $inc: {
                 qtyReceived: remainingToSubtract,
-                qtySold: remainingToSubtract, // Mark it as internally fulfilled
+                qtySold: remainingToSubtract,
+              },
+              $setOnInsert: {
+                expiry: fallbackExpiry,
                 unitCost: product.mrp * 0.7,
                 supplier: batchSupplier,
-                pharmacy: pharmacyId,
                 hospital: hospitalId,
                 grnDate: new Date(),
               },
-            ],
-            { session },
+            },
+            {
+              upsert: true,
+              new: true,
+              session,
+              setDefaultsOnInsert: true,
+            },
           );
 
           // Use system adjustment batch for display if no real batch was found
           if (!firstBatchId) {
-            firstBatchId = sysAdjBatch[0]._id;
+            firstBatchId = sysAdjBatch!._id;
             firstBatchNo = "SYSTEM_ADJ";
             firstBatchExpiry = fallbackExpiry;
           }
