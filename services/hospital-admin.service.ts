@@ -987,7 +987,14 @@ export class HospitalAdminService {
                     "",
                   ],
                 },
-                patientDetails: "$patientLookup",
+                patientDetails: {
+                  $mergeObjects: [
+                    { $ifNull: ["$patientLookup", {}] },
+                    { mrn: { $ifNull: ["$adm.mrn", "—"] } }
+                  ]
+                },
+                patientMRN: { $ifNull: ["$adm.mrn", "—"] },
+                mrn: { $ifNull: ["$adm.mrn", "—"] },
                 paymentDetails: "$paymentDetails",
                 phone: { $ifNull: ["$adm.phone", "$patientLookup.mobile"] },
                 type: {
@@ -1124,7 +1131,15 @@ export class HospitalAdminService {
                     "",
                   ],
                 },
-                patientDetails: { $ifNull: ["$patientLookup", "$apptLookup.patientDetails"] },
+                patientDetails: {
+                  $mergeObjects: [
+                    { $ifNull: ["$patientLookup", {}] },
+                    { $ifNull: ["$apptLookup.patientDetails", {}] },
+                    { mrn: { $ifNull: ["$admLookup.mrn", "$apptLookup.patientDetails.mrn", "—"] } }
+                  ]
+                },
+                patientMRN: { $ifNull: ["$admLookup.mrn", "$apptLookup.patientDetails.mrn", "—"] },
+                mrn: { $ifNull: ["$admLookup.mrn", "$apptLookup.patientDetails.mrn", "—"] },
                 paymentDetails: 1,
                 phone: { $ifNull: ["$patientLookup.mobile", "$apptLookup.patientDetails.phone", "—"] },
                 type: { $literal: "ipd_advance" },
@@ -1156,7 +1171,7 @@ export class HospitalAdminService {
                 status: "completed",
               },
             },
-            // Lookup parent admission to recover missing doctor names
+            // Lookup parent admission to recover missing doctor names and patient ID
             {
               $lookup: {
                 from: "ipdadmissions",
@@ -1171,16 +1186,27 @@ export class HospitalAdminService {
             {
               $lookup: {
                 from: "patients",
-                localField: "patient",
-                foreignField: "_id",
+                let: { pId: "$patient", admPId: "$admChild.patient" },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $or: [
+                          { $and: [{ $ne: ["$$pId", null] }, { $eq: ["$_id", "$$pId"] }] },
+                          { $and: [{ $ne: ["$$admPId", null] }, { $eq: ["$_id", "$$admPId"] }] }
+                        ]
+                      }
+                    }
+                  }
+                ],
                 as: "patientLookup",
               },
             },
-            { $unwind: { path: "$patientLookup", preserveNullAndEmptyArrays: true } },
+            { $unwind: { path: "$patientLookup", preserveNullAndEmptyArrays: true }, },
             {
               $project: {
                 _id: 1,
-                user: "$patient",
+                user: { $ifNull: ["$patient", "$admChild.patient", "$patientLookup._id"] },
                 hospital: 1,
                 amount: { $ifNull: ["$finalPayment", "$balance", 0] }, // DUE AMOUNT
                 totalBillAmount: { $ifNull: ["$totalBillAmount", 0] },
@@ -1225,7 +1251,14 @@ export class HospitalAdminService {
                     "",
                   ],
                 },
-                patientDetails: "$patientLookup",
+                patientDetails: {
+                  $mergeObjects: [
+                    { $ifNull: ["$patientLookup", {}] },
+                    { mrn: { $ifNull: ["$mrn", "$admChild.mrn", "—"] } }
+                  ]
+                },
+                patientMRN: { $ifNull: ["$mrn", "$admChild.mrn", "—"] },
+                mrn: { $ifNull: ["$mrn", "$admChild.mrn", "—"] },
                 phone: {
                   $ifNull: [
                     "$phone",
@@ -1366,8 +1399,32 @@ export class HospitalAdminService {
                           "",
                         ],
                       },
+                      mrn: {
+                        $ifNull: [
+                          { $arrayElemAt: ["$profileLookup.mrn", 0] },
+                          "$patientDetails.mrn",
+                          { $arrayElemAt: ["$patientLookup.mrn", 0] },
+                          "N/A"
+                        ]
+                      }
                     },
                   ],
+                },
+                patientMRN: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$profileLookup.mrn", 0] },
+                    "$patientDetails.mrn",
+                    { $arrayElemAt: ["$patientLookup.mrn", 0] },
+                    "N/A"
+                  ]
+                },
+                mrn: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$profileLookup.mrn", 0] },
+                    "$patientDetails.mrn",
+                    { $arrayElemAt: ["$patientLookup.mrn", 0] },
+                    "N/A"
+                  ]
                 },
                 suggestedDoctorName: "$suggestedDoctorName",
                 disease: "$disease",
@@ -2013,6 +2070,28 @@ export class HospitalAdminService {
                 patientDetails: 1,
                 patientData: 1,
                 profileData: 1,
+                patientMRN: {
+                  $ifNull: [
+                    "$patientMRN",
+                    "$mrn",
+                    "$user.mrn",
+                    "$patientDetails.mrn",
+                    { $arrayElemAt: ["$profileData.mrn", 0] },
+                    { $arrayElemAt: ["$patientData.mrn", 0] },
+                    "—"
+                  ]
+                },
+                mrn: {
+                  $ifNull: [
+                    "$mrn",
+                    "$patientMRN",
+                    "$user.mrn",
+                    "$patientDetails.mrn",
+                    { $arrayElemAt: ["$profileData.mrn", 0] },
+                    { $arrayElemAt: ["$patientData.mrn", 0] },
+                    "—"
+                  ]
+                },
                 hospital: 1,
                 amount: 1,
                 type: 1,
@@ -2026,6 +2105,17 @@ export class HospitalAdminService {
                 receiptNumber: 1,
                 referenceId: {
                   _id: "$referenceId",
+                  mrn: {
+                    $ifNull: [
+                      "$mrn",
+                      "$patientMRN",
+                      "$user.mrn",
+                      "$patientDetails.mrn",
+                      { $arrayElemAt: ["$profileData.mrn", 0] },
+                      { $arrayElemAt: ["$patientData.mrn", 0] },
+                      "—"
+                    ]
+                  },
                   reason: { $ifNull: ["$reason", "$diagnosis", "-"] },
                   disease: "$disease",
                   diagnosis: "$diagnosis",
