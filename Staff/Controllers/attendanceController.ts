@@ -165,8 +165,20 @@ export const checkIn = async (req: Request, res: Response) => {
     const userId = (req as any).user._id;
     const hospitalId = (req as any).hospitalId || (req as any).user.hospital;
 
+    let finalLat = lat;
+    let finalLng = lng;
     let locationWarning: string | null = null;
-    if (!lat || !lng) {
+
+    if (!finalLat || !finalLng) {
+      const hospital = await Hospital.findById(hospitalId);
+      if (hospital?.location?.lat && hospital?.location?.lng) {
+        finalLat = hospital.location.lat;
+        finalLng = hospital.location.lng;
+        locationWarning = "Device location unavailable. Defaulted to hospital premises.";
+      }
+    }
+
+    if (!finalLat || !finalLng) {
       return res.status(400).json({
         message: "Location permission is required for attendance clock-in. Please enable location on your device."
       });
@@ -297,7 +309,7 @@ export const checkIn = async (req: Request, res: Response) => {
         date: today,
         checkIn: realNow,
         checkOut: null, // Reset checkOut in case re-clocking in during valid shift
-        locationIn: { lat, lng },
+        locationIn: { lat: finalLat, lng: finalLng },
         photoIn: photoData,
         shiftName,
         shiftStart: startTime,
@@ -327,15 +339,25 @@ export const checkOut = async (req: Request, res: Response) => {
     const userId = (req as any).user._id;
     const hospitalId = (req as any).hospitalId || (req as any).user.hospital;
 
-    if (!lat || !lng) {
+    let finalLat = lat;
+    let finalLng = lng;
+
+    const hospital = await Hospital.findById(hospitalId);
+
+    // If device location is unavailable (e.g. desktop browser / permission not granted), fallback to hospital location
+    if ((!finalLat || !finalLng) && hospital?.location?.lat && hospital?.location?.lng) {
+      finalLat = hospital.location.lat;
+      finalLng = hospital.location.lng;
+    }
+
+    if (!finalLat || !finalLng) {
       return res.status(400).json({
-        message: "Location permission is required for attendance clock-out."
+        message: "Location permission is required for attendance clock-out. Please enable location on your device."
       });
     }
 
-    // Strict Geofence Check for Check-out (500m radius)
-    const hospital = await Hospital.findById(hospitalId);
-    if (hospital && hospital.location && hospital.location.lat && hospital.location.lng) {
+    // Strict Geofence Check for Check-out (500m radius) if client coordinates provided
+    if (lat && lng && hospital && hospital.location && hospital.location.lat && hospital.location.lng) {
       const distance = getDistance(
         lat,
         lng,
@@ -382,7 +404,7 @@ export const checkOut = async (req: Request, res: Response) => {
       { user: userId, date: today },
       {
         checkOut: realNow,
-        locationOut: { lat, lng },
+        locationOut: { lat: finalLat, lng: finalLng },
         photoOut: photoData,
         isAutoClockOut: false,
       },
