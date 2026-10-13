@@ -11,7 +11,61 @@ import DischargeRecord from "../Discharge/Models/DischargeRecord.js";
 import mongoose from "mongoose";
 import ReminderConfiguration from "../Hospital/Models/ReminderConfiguration.js";
 import PatientProfile from "../Patient/Models/PatientProfile.js";
+import Hospital from "../Hospital/Models/Hospital.js";
 import { safeEmit } from "../config/socket.js";
+import whatsappManager from "../WhatsApp/Services/whatsappManager.js";
+import { isSocketOpen } from "../WhatsApp/Services/whatsappService.js";
+import { buildRichFollowUpReminderMessage } from "../WhatsApp/Services/whatsappMessageBuilder.js";
+
+/**
+ * Helper to get current Indian Standard Time (IST, UTC+5:30) date parts
+ */
+const getISTTime = (date: Date = new Date()) => {
+  const istFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour12: false,
+    hour: "numeric",
+    minute: "numeric",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  });
+  const parts = istFormatter.formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "0";
+  return {
+    hour: parseInt(get("hour"), 10),
+    minute: parseInt(get("minute"), 10),
+    year: parseInt(get("year"), 10),
+    month: parseInt(get("month"), 10),
+    day: parseInt(get("day"), 10),
+  };
+};
+
+/**
+ * Helper to format date strictly as DD/MM/YYYY (first day/month/year)
+ */
+const formatDateDMY = (dateInput: Date | string | number | undefined | null): string => {
+  if (!dateInput) return "";
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return "";
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
+/**
+ * Helper to ensure a doctor's name is formatted cleanly with exactly one "Dr. " prefix
+ * and never duplicates "Dr. Dr." or prepends "Dr." to generic "your doctor".
+ */
+const formatDoctorDisplay = (name: string | null | undefined): string => {
+  if (!name || name.trim().toLowerCase() === "your doctor") return "your doctor";
+  let cleaned = name.trim();
+  while (/^(dr\.?\s*)/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^(dr\.?\s*)/i, "").trim();
+  }
+  return cleaned ? `Dr. ${cleaned}` : "your doctor";
+};
 
 /**
  * Service to process follow-up reminders
@@ -32,6 +86,7 @@ export const processFollowUpReminders = async () => {
         config.hospital,
         config.opdReminderSlots,
         now,
+        config,
       );
     }
 
@@ -49,14 +104,14 @@ export const processFollowUpReminders = async () => {
 
     // 3. Process hospitals WITHOUT custom config (using defaults)
     const defaultOpdSlots = [
-      { hour: 8, minute: 0 },
-      { hour: 13, minute: 0 },
-      { hour: 16, minute: 20 },
-      { hour: 19, minute: 0 },
+      { hour: 9, minute: 0, isEnabled: true },
+      { hour: 13, minute: 0, isEnabled: true },
+      { hour: 16, minute: 20, isEnabled: true },
+      { hour: 19, minute: 0, isEnabled: true },
     ];
 
     for (const hospitalId of hospitalsWithoutConfig) {
-      await processHospitalOpdReminders(hospitalId, defaultOpdSlots, now);
+      await processHospitalOpdReminders(hospitalId, defaultOpdSlots, now, null);
     }
   } catch (err) {
     console.error("[ReminderService] Error processing OPD reminders:", err);
@@ -75,19 +130,22 @@ function getDaysDiff(futureDate: Date, now: Date) {
 }
 
 /**
- * Helper to get current slot index based on time
+ * Helper to get current slot index based on IST time
  */
 function getCurrentSlotIndex(slots: any[], now: Date) {
-  const currentHour = now.getHours();
-  const currentMin = now.getMinutes();
-  let currentSlotIndex = -1;
-  const sortedSlots = [...slots].sort(
+  const ist = getISTTime(now);
+  const currentTotalMinutes = ist.hour * 60 + ist.minute;
+  
+  // Only process active/enabled slots (defaults to true)
+  const activeSlots = (slots || []).filter((s) => s.isEnabled !== false);
+  const sortedSlots = [...activeSlots].sort(
     (a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute),
   );
 
+  let currentSlotIndex = -1;
   for (let i = sortedSlots.length - 1; i >= 0; i--) {
     const slotTime = sortedSlots[i].hour * 60 + sortedSlots[i].minute;
-    if (currentHour * 60 + currentMin >= slotTime) {
+    if (currentTotalMinutes >= slotTime) {
       currentSlotIndex = i;
       break;
     }
@@ -97,22 +155,40 @@ function getCurrentSlotIndex(slots: any[], now: Date) {
 
 /**
  * Helper to process OPD reminders for a specific hospital and set of slots
+ * Executes LINE-BY-LINE in a sequential queue with anti-spam pacing for WhatsApp
  */
 async function processHospitalOpdReminders(
   hospitalId: any,
   slots: any[],
   now: Date,
+  config?: any,
 ) {
-  const { currentSlotIndex, sortedSlots } = getCurrentSlotIndex(slots, now);
-  if (currentSlotIndex === -1) return;
+  const enablePortalReminders = config ? config.enablePortalReminders !== false : true;
+  const enableWhatsAppReminders = config ? config.enableWhatsAppReminders !== false : true;
 
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
+  // If both reminder channels are disabled, skip processing
+  if (!enablePortalReminders && !enableWhatsAppReminders) {
+    return;
+  }
+
+  const { currentSlotIndex, sortedSlots } = getCurrentSlotIndex(slots, now);
+  if (currentSlotIndex === -1 || sortedSlots.length === 0) return;
+
+  const ist = getISTTime(now);
+  // Start of today in IST
+  const startOfTodayIST = new Date(Date.UTC(ist.year, ist.month - 1, ist.day, 0, 0, 0) - (5.5 * 3600000));
+  
+  // 🎯 TWIST: Only process new prescriptions/appointments created from today onwards!
+  // Prevents sending reminders to past historical patients.
+  const cutoffDate = config?.featureCutoffDate && config.featureCutoffDate < startOfTodayIST
+    ? config.featureCutoffDate
+    : startOfTodayIST;
 
   const prescriptions = await (
     Prescription.find({
       hospital: hospitalId,
-      followUpDate: { $gte: startOfToday },
+      followUpDate: { $gte: startOfTodayIST },
+      createdAt: { $gte: cutoffDate }, // 🎯 Twist: ONLY from this day onwards!
       $or: [
         { followUpRemindersSent: { $lt: sortedSlots.length } },
         { followUpRemindersSent: { $exists: false } },
@@ -123,8 +199,10 @@ async function processHospitalOpdReminders(
     .populate({ path: "patient", select: "name mobile phone user", options: { unscoped: true } });
 
   console.log(
-    `[ReminderService] Hospital ${hospitalId}: Found ${prescriptions.length} potential prescriptions matching base criteria.`,
+    `[ReminderService] Hospital ${hospitalId}: Found ${prescriptions.length} eligible prescriptions created from ${cutoffDate.toISOString()} onwards.`,
   );
+
+  if (prescriptions.length === 0) return;
 
   // Extract all unique doctor IDs for bulk lookup
   const doctorIds = Array.from(
@@ -149,72 +227,102 @@ async function processHospitalOpdReminders(
     .lean();
   const userMap = new Map(users.map((u) => [u._id.toString(), u]));
 
-  // Process all prescriptions in parallel to avoid blocking the loop
-  await Promise.all(
-    prescriptions.map(async (prescription) => {
-      if (!prescription.followUpDate) return;
+  // Hospital doc for WhatsApp branding
+  const hospitalDoc: any = await (Hospital.findById(hospitalId) as any).unscoped().select("name").lean();
 
-      const daysDiff = getDaysDiff(prescription.followUpDate, now);
-      const currentlySent = (prescription as any).followUpRemindersSent || 0;
+  // 🚀 SEQUENTIAL LINE-BY-LINE QUEUE DISPATCH (Anti-burst, protects WhatsApp session)
+  for (const prescription of prescriptions) {
+    if (!prescription.followUpDate) continue;
 
-      if (daysDiff !== 1) return; // Only tomorrow for OPD
-      if (currentlySent > currentSlotIndex) return;
+    const daysDiff = getDaysDiff(prescription.followUpDate, now);
+    const currentlySent = (prescription as any).followUpRemindersSent || 0;
 
-      let senderId =
-        (prescription as any).createdBy || (prescription as any).doctor;
-      let doctorName = "your doctor";
+    if (daysDiff !== 1) continue; // Only tomorrow for OPD
+    if (currentlySent > currentSlotIndex) continue;
 
-      const docProfile: any = (prescription as any).doctor
-        ? docProfileMap.get((prescription as any).doctor.toString())
-        : null;
-      if (docProfile?.user) {
-        senderId = docProfile.user;
-        const docUser: any = userMap.get(docProfile.user.toString());
-        if (docUser) doctorName = docUser.name;
-      }
+    let senderId =
+      (prescription as any).createdBy || (prescription as any).doctor;
+    let doctorName = "your doctor";
 
-      const followUpDateStr = new Date(
-        prescription.followUpDate,
-      ).toLocaleDateString();
+    const docProfile: any = (prescription as any).doctor
+      ? docProfileMap.get((prescription as any).doctor.toString())
+      : null;
+    if (docProfile?.user) {
+      senderId = docProfile.user;
+      const docUser: any = userMap.get(docProfile.user.toString());
+      if (docUser) doctorName = docUser.name;
+    }
 
-      // Create notifications for all missed slots up to currentSlotIndex
-      const notificationPromises: Promise<any>[] = [];
+    const followUpDateStr = formatDateDMY(prescription.followUpDate);
+    const doctorDisplay = formatDoctorDisplay(doctorName);
+    const patientName = (prescription.patient as any)?.name || "you";
+    const message = `Follow-up Reminder for ${patientName}: You have a scheduled visit tomorrow (${followUpDateStr}) for "${(prescription as any).diagnosis}". Please consult with ${doctorDisplay}.`;
+
+    // 1. Channel: Patient Portal In-App Notification (Line-by-line)
+    if (enablePortalReminders) {
       for (
         let slotIdx = currentlySent;
         slotIdx <= currentSlotIndex;
         slotIdx++
       ) {
-        const patientName = (prescription.patient as any)?.name || "you";
-        const message = `Follow-up Reminder for ${patientName}: You have a scheduled visit tomorrow (${followUpDateStr}) for "${(prescription as any).diagnosis}". Please consult with Dr. ${doctorName}.`;
-
-        notificationPromises.push(
-          createNotification(null, {
-            hospital: hospitalId,
-            recipient: prescription.patient,
-            sender: senderId,
-            type: "followup_reminder",
-            message,
-            relatedId: prescription._id,
-          }),
-        );
+        await createNotification(null, {
+          hospital: hospitalId,
+          recipient: prescription.patient,
+          sender: senderId,
+          type: "followup_reminder",
+          message,
+          relatedId: prescription._id,
+        });
       }
+    }
 
-      await Promise.all(notificationPromises);
+    // 2. Channel: Patient WhatsApp Reminder (Sequential queue with pacing delay)
+    if (enableWhatsAppReminders) {
+      const patientPhone = (prescription.patient as any)?.mobile || (prescription.patient as any)?.phone;
+      if (patientPhone) {
+        try {
+          const hospIdStr = hospitalId.toString();
+          const waService = whatsappManager.getInstance(hospIdStr, hospitalDoc?.name);
+          if (waService && (waService.status === "CONNECTED" || isSocketOpen(waService.sock))) {
+            const activeSlot = sortedSlots[currentSlotIndex];
+            const slotHour = activeSlot ? activeSlot.hour : 10;
+            const slotMin = activeSlot ? String(activeSlot.minute).padStart(2, "0") : "00";
+            const slotHour12 = slotHour % 12 || 12;
+            const slotAmPm = slotHour >= 12 ? "PM" : "AM";
+            const defaultSlotStr = `${String(slotHour12).padStart(2, "0")}:${slotMin} ${slotAmPm}`;
+            const timeSlotStr = (prescription as any).followUpTime || defaultSlotStr;
 
-      // 🛑 AUTOMATED EXTERNAL WHATSAPP DISPATCH DISABLED:
-      // Prevents unsolicited messages and protects linked devices from Meta spam restrictions.
-      // Notifications are delivered safely in-app and via Socket.IO.
-      safeEmit(`hospital_${hospitalId}`, "reminder:opd_processed", {
-        type: "opd_followup_reminder",
-        patientName: (prescription.patient as any)?.name || "Patient",
-        followUpDate: prescription.followUpDate,
-        prescriptionId: prescription._id,
-      });
+            const waMessage = buildRichFollowUpReminderMessage({
+              patientName,
+              doctorName: doctorDisplay,
+              date: prescription.followUpDate,
+              timeSlot: timeSlotStr,
+              hospitalName: hospitalDoc?.name || "Hospital Healthcare",
+              daysRemaining: 1,
+            });
 
-      (prescription as any).followUpRemindersSent = currentSlotIndex + 1;
-      await prescription.save();
-    }),
-  );
+            await waService.sendTextMessage(patientPhone, waMessage);
+            console.log(`[ReminderService Queue] WhatsApp follow-up reminder sent to ${patientName} (${patientPhone})`);
+
+            // ⏳ Safe anti-spam pacing delay between patients in the queue (1.5s)
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+        } catch (waErr: any) {
+          console.warn(`[ReminderService Queue] WhatsApp dispatch warning for ${patientName}:`, waErr?.message);
+        }
+      }
+    }
+
+    safeEmit(`hospital_${hospitalId}`, "reminder:opd_processed", {
+      type: "opd_followup_reminder",
+      patientName: (prescription.patient as any)?.name || "Patient",
+      followUpDate: prescription.followUpDate,
+      prescriptionId: prescription._id,
+    });
+
+    (prescription as any).followUpRemindersSent = currentSlotIndex + 1;
+    await prescription.save();
+  }
 }
 
 /**
@@ -319,9 +427,7 @@ export const processDischargeFollowUpReminders = async () => {
             const profile: any = profileMap.get(record.mrn);
 
             if (profile?.user) {
-              const followUpDateStr = new Date(
-                record.followUpDate,
-              ).toLocaleDateString();
+              const followUpDateStr = formatDateDMY(record.followUpDate);
               const timeStr = new Date(record.followUpDate).toLocaleTimeString(
                 [],
                 { hour: "2-digit", minute: "2-digit" },
@@ -493,11 +599,11 @@ export const processTokenExpiryWhatsAppAlerts = async () => {
  */
 export const initReminderService = () => {
   console.log(
-    "[ReminderService] Initializing background checks (automated patient WhatsApp alerts & follow-up crons removed)...",
+    "[ReminderService] Initializing background checks for follow-up reminders, license alerts, and vitals escalations...",
   );
 
-  // Automated follow-ups and WhatsApp token expiry crons removed
-  // Keep internal license expiry check and vitals monitoring escalation
+  // Periodic follow-up check every 2 minutes for IST slots
+  setInterval(processFollowUpReminders, 2 * 60 * 1000);
   setInterval(processLicenseExpiryAlerts, 24 * 60 * 60 * 1000); // Check once a day
   setInterval(processVitalsMonitoringEscalation, 5 * 60 * 1000); // Check every 5 mins
 };
@@ -589,12 +695,12 @@ export const processSingleProfileExpiry = async (
       // Expired or Today
       if (!profile.expiryAlertsSent?.expired) {
         alertType = "expired";
-        message = `CRITICAL: Your professional license has EXPIRED or expires TODAY (${expiryDate.toLocaleDateString()}). Immediate renewal required!`;
+        message = `CRITICAL: Your professional license has EXPIRED or expires TODAY (${formatDateDMY(expiryDate)}). Immediate renewal required!`;
       }
     } else if (diffDays <= 30 && !profile.expiryAlertsSent?.thirtyDay) {
       // Within 30 Days
       alertType = "thirtyDay";
-      message = `REMINDER: Your professional license is set to expire in ${diffDays} days (${expiryDate.toLocaleDateString()}). Please initiate for your Certification renewal.`;
+      message = `REMINDER: Your professional license is set to expire in ${diffDays} days (${formatDateDMY(expiryDate)}). Please initiate for your Certification renewal.`;
     }
 
     if (alertType && message) {

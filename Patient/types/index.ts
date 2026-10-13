@@ -40,6 +40,7 @@ export interface IPatientProfile extends Document {
     notes?: string;
     bio?: string;
     age?: number; // Virtual
+    ageUnit?: "Years" | "Months" | "Days" | string;
     createdAt: Date;
     updatedAt: Date;
 }

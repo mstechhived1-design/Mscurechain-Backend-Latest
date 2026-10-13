@@ -3,9 +3,12 @@ import multiTenancyPlugin from "../../middleware/tenantPlugin.js";
 
 export interface IReminderConfiguration extends Document {
   hospital: mongoose.Schema.Types.ObjectId;
-  opdReminderSlots: { hour: number; minute: number }[];
+  opdReminderSlots: { hour: number; minute: number; isEnabled?: boolean }[];
   ipdReminderDays: number[];
   isActive: boolean;
+  enablePortalReminders: boolean;
+  enableWhatsAppReminders: boolean;
+  featureCutoffDate?: Date;
 }
 
 const reminderConfigurationSchema = new Schema<IReminderConfiguration>(
@@ -20,10 +23,14 @@ const reminderConfigurationSchema = new Schema<IReminderConfiguration>(
       {
         hour: { type: Number, required: true },
         minute: { type: Number, required: true },
+        isEnabled: { type: Boolean, default: true },
       },
     ],
     ipdReminderDays: [{ type: Number }],
     isActive: { type: Boolean, default: true },
+    enablePortalReminders: { type: Boolean, default: true },
+    enableWhatsAppReminders: { type: Boolean, default: true },
+    featureCutoffDate: { type: Date, default: () => new Date() },
   },
   { timestamps: true },
 );

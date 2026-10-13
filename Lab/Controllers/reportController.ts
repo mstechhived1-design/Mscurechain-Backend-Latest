@@ -549,7 +549,9 @@ export const generateWalkInLabReport = async (req: Request, res: Response): Prom
         age: patient?.age || 0,
         gender: patient?.gender || 'Unknown',
         mobile: patient?.mobile || 'N/A',
-        patientId: patient?.registrationId || 'N/A'
+        patientId: patient?.registrationId || 'N/A',
+        honorific: patient?.honorific || '',
+        ageUnit: patient?.ageUnit || 'Years',
       },
       tests: order.tests.map((testItem: any) => {
         const testData = testItem.test;
@@ -633,7 +635,9 @@ export const generateWalkInReportWithBilling = async (req: Request, res: Respons
         age: patient?.age || 0,
         gender: patient?.gender || 'Unknown',
         mobile: patient?.mobile || 'N/A',
-        patientId: patient?.registrationId || 'N/A'
+        patientId: patient?.registrationId || 'N/A',
+        honorific: patient?.honorific || '',
+        ageUnit: patient?.ageUnit || 'Years',
       },
       tests: order.tests.map((testItem: any) => {
         const testData = testItem.test;

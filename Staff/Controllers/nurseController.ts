@@ -10,6 +10,7 @@ import Hospital from "../../Hospital/Models/Hospital.js";
 import Bed from "../../IPD/Models/Bed.js";
 import NursingTask from "../Models/NursingTask.js";
 import Prescription from "../../Prescription/Models/Prescription.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 
 // ---------------------------------------------------------------------------
 // Native date helpers (replaces moment dependency)
@@ -104,7 +105,7 @@ export const getNursePatients = async (req: any, res: Response) => {
       hospital: hospitalId,
       status: "Active",
     })
-      .populate({ path: "patient", select: "name mobile gender dateOfBirth" })
+      .populate({ path: "patient", select: "name mobile gender dateOfBirth honorific" })
       .populate({
         path: "primaryDoctor",
         populate: { path: "user", select: "name" },
@@ -155,8 +156,16 @@ export const getNursePatients = async (req: any, res: Response) => {
             }
           }
 
+          const honorific = adm.patient?.honorific || adm.honorific || adm.patientHonorific;
+          const patientObj = adm.patient ? {
+            ...(adm.patient.toObject ? adm.patient.toObject() : adm.patient),
+            name: formatPatientDisplayName(adm.patient.name, honorific),
+            honorific
+          } : null;
+
           return {
             ...adm.toObject(),
+            patient: patientObj,
             bed: bed,
           };
         }),
@@ -220,8 +229,8 @@ export const getNurseTasks = async (req: any, res: Response) => {
     // 1. Fetch existing tasks from DB
     let [tasks, total] = await Promise.all([
       NursingTask.find(query)
-        .populate("patient", "name mobile gender dateOfBirth")
-        .populate("admission", "admissionId")
+        .populate("patient", "name mobile gender dateOfBirth honorific")
+        .populate("admission", "admissionId honorific patientHonorific patientName")
         .sort({ dueDate: 1 })
         .skip(skip)
         .limit(limit),
@@ -234,7 +243,7 @@ export const getNurseTasks = async (req: any, res: Response) => {
       const activeAdmissions = await IPDAdmission.find({
         hospital: hospitalId,
         status: "Active",
-      }).populate("patient", "name mobile gender dateOfBirth");
+      }).populate("patient", "name mobile gender dateOfBirth honorific");
 
       const generatedTasks: any[] = [];
 
@@ -244,7 +253,7 @@ export const getNurseTasks = async (req: any, res: Response) => {
 
         // Extract patient info safely
         const patientObj = adm.patient as any;
-        const patientName = patientObj.name || "Unknown Patient";
+        const patientName = formatPatientDisplayName(patientObj.name, patientObj.honorific || (adm as any).honorific || (adm as any).patientHonorific);
         const patientId = patientObj._id || adm.patient; // adm.patient is the ID if not populated
 
         // Check if THIS admission already has tasks for TODAY in the DB
@@ -323,8 +332,8 @@ export const getNurseTasks = async (req: any, res: Response) => {
         // Re-fetch to get populated fields for the response
         [tasks, total] = await Promise.all([
           NursingTask.find(query)
-            .populate("patient", "name mobile gender dateOfBirth")
-            .populate("admission", "admissionId")
+            .populate("patient", "name mobile gender dateOfBirth honorific")
+            .populate("admission", "admissionId honorific patientHonorific patientName")
             .sort({ dueDate: 1 })
             .skip(skip)
             .limit(limit),
@@ -333,9 +342,23 @@ export const getNurseTasks = async (req: any, res: Response) => {
       }
     }
 
+    const formattedTasks = tasks.map((t: any) => {
+      const obj = t.toObject ? t.toObject() : { ...t };
+      const honorific = obj.patient?.honorific || obj.admission?.honorific || obj.admission?.patientHonorific;
+      const formattedPatientName = formatPatientDisplayName(obj.patient?.name || obj.admission?.patientName, honorific);
+      if (obj.patient && typeof obj.patient === "object") {
+        obj.patient = {
+          ...obj.patient,
+          name: formattedPatientName,
+          honorific,
+        };
+      }
+      return obj;
+    });
+
     res.json({
       success: true,
-      data: tasks,
+      data: formattedTasks,
       total,
       currentPage: page,
       totalPages: Math.ceil(total / limit),

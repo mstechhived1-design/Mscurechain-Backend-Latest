@@ -54,6 +54,7 @@ const incidentSchema = new Schema<IIncident>({
     mrnNumber: { type: String },
     bedNumber: { type: String },
     roomNumber: { type: String },
+    honorific: { type: String },
   },
   equipmentFailureDetails: {
     equipmentName: { type: String },

@@ -21,6 +21,7 @@ export interface IInvoiceItem {
 export interface IPharmaInvoice extends Document {
   invoiceNo: string;
   patientName: string;
+  honorific?: string;
   patientAddress?: string;
   mrn?: string;
   patientType?: string;
@@ -94,6 +95,7 @@ const invoiceSchema = new Schema<IPharmaInvoice>(
   {
     invoiceNo: { type: String }, // Scoped uniqueness handled by compound index below
     patientName: { type: String, required: true, trim: true },
+    honorific: { type: String, trim: true },
     patientAddress: { type: String, trim: true },
     mrn: { type: String, trim: true },
     patientType: { type: String, trim: true },

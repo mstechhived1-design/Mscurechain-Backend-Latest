@@ -10,7 +10,7 @@ import labService from '../../services/lab.service.js';
  */
 export const registerWalkInPatient = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { name, age, gender, mobile, email, address } = req.body;
+        const { name, age, gender, mobile, email, address, honorific, ageUnit } = req.body;
         const hospitalId = (req as any).user?.hospital;
 
         if (!name || !age || !gender || !mobile) {
@@ -36,7 +36,9 @@ export const registerWalkInPatient = async (req: Request, res: Response): Promis
         // Create new walk-in patient
         const patient = await WalkInPatient.create({
             name,
+            honorific,
             age,
+            ageUnit: ageUnit || "Years",
             gender,
             mobile,
             email,

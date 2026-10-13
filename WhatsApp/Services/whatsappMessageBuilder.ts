@@ -95,30 +95,87 @@ export function buildRichFollowUpReminderMessage(data: {
   }
 
   if (data.isExpired) {
-    return `⚠️ *FOLLOW-UP WINDOW EXPIRATION ALERT*
+    return `*FOLLOW-UP WINDOW EXPIRATION ALERT*
 ━━━━━━━━━━━━━━━━━━━━
 Hi *${pName}*,
 Your follow-up consultation window with *${docName}* at *${hospName}* has expired or is expiring today (${dateFormatted}).
 ${READ_MORE}
 ━━━━━━━━━━━━━━━━━━━━
-💡 *What to do next:*
+*What to do next:*
 Please schedule a new appointment or contact our helpdesk to renew your consultation token.
 
-Contact Front Desk or use the MsCurechain App to book your visit! 🏥`;
+Contact Front Desk or use the MsCurechain App to book your visit!`;
   }
 
   const daysText = data.daysRemaining === 1 ? "Tomorrow" : `in ${data.daysRemaining} days`;
 
-  return `🔔 *UPCOMING FOLLOW-UP REMINDER*
+  return `*UPCOMING FOLLOW-UP REMINDER*
 ━━━━━━━━━━━━━━━━━━━━
 Hi *${pName}*,
 This is a friendly reminder for your upcoming follow-up checkup with *${docName}* at *${hospName}*.
 ${READ_MORE}
 ━━━━━━━━━━━━━━━━━━━━
-📅 *Follow-Up Date:* ${dateFormatted} (${daysText})
-⏰ *Time Slot:* ${timeStr}
+*Follow-Up Date:* ${dateFormatted} (${daysText})
+*Time Slot:* ${timeStr}
 
-📌 *Reminder:* Please bring your previous prescription and diagnostic reports.
+*Reminder:* Please bring your previous prescription and diagnostic reports.
 
-We look forward to seeing you! Stay Healthy! 🏥`;
+We look forward to seeing you! Stay Healthy!`;
 }
+
+export interface PatientWelcomeMessageData {
+  patientName: string;
+  mrn: string;
+  mobile: string;
+  gender?: string;
+  age?: number | string;
+  registrationDate?: string | Date;
+  hospitalName?: string;
+  hospitalAddress?: string;
+  hospitalPhone?: string;
+  hospitalEmail?: string;
+}
+
+export function buildPatientWelcomeMessage(data: PatientWelcomeMessageData): string {
+  const hName = data.hospitalName || "Hospital Healthcare";
+  let dateStr = "Today";
+  if (data.registrationDate) {
+    try {
+      const d = new Date(data.registrationDate);
+      if (!isNaN(d.getTime())) {
+        const day = String(d.getDate()).padStart(2, "0");
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const year = d.getFullYear();
+        dateStr = `${day}/${month}/${year}`;
+      }
+    } catch (_) {}
+  } else {
+    const d = new Date();
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    dateStr = `${day}/${month}/${year}`;
+  }
+
+  return `🎉 *WELCOME TO ${hName.toUpperCase()}*
+━━━━━━━━━━━━━━━━━━━━
+Dear *${data.patientName}*,
+
+Thank you for choosing *${hName}*! Your patient registration has been successfully confirmed.
+
+📋 *PATIENT DETAILS:*
+• *Patient Name:* ${data.patientName}
+• *MRN / Patient ID:* ${data.mrn}
+• *Registered Mobile:* ${data.mobile}${data.gender ? `\n• *Gender:* ${data.gender}` : ""}${data.age ? `\n• *Age:* ${data.age}` : ""}
+• *Registration Date:* ${dateStr}
+
+🏥 *HOSPITAL DETAILS:*
+• *Hospital:* ${hName}${data.hospitalAddress ? `\n• *Address:* ${data.hospitalAddress}` : ""}${data.hospitalPhone ? `\n• *Helpline:* ${data.hospitalPhone}` : ""}${data.hospitalEmail ? `\n• *Email:* ${data.hospitalEmail}` : ""}
+━━━━━━━━━━━━━━━━━━━━
+${READ_MORE}
+💡 *Important Note:*
+Please keep your MRN (*${data.mrn}*) safe. You can use it for all future appointments, consultations, and accessing your medical history at ${hName}.
+
+We are committed to your health and well-being! Stay Healthy! 🏥`;
+}
+

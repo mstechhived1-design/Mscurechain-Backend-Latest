@@ -436,19 +436,36 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
     }
     const fallbackSupplier = suppliers[0]?._id;
 
-    // 2. Fetch all existing products for the provided SKUs
+    // Helper to generate a normalized matching key for a medicine
+    const getProductMatchKey = (brandStr: string, genericStr: string, strengthStr: string, formStr: string) => {
+      const b = (brandStr || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+      const g = (genericStr || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+      const s = (strengthStr || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+      const f = normalizeForm(formStr);
+      return `${b}_${g}_${s}_${f}`;
+    };
+
+    // 2. Fetch existing products for the pharmacy to match by SKU or Brand+Generic+Strength+Form
     const skus = productsData
-      .map((item) => item.sku?.toString().trim())
+      .map((item) => item.sku?.toString().trim().toUpperCase())
       .filter(Boolean);
 
+    // Fetch existing products either matching the SKUs or active in this pharmacy
     const existingProducts = await (Product.find({
       pharmacy: pharmacyId,
-      sku: { $in: skus },
     }) as any).unscoped().lean();
 
     const productMap = new Map<string, any>();
+    const productAttrMap = new Map<string, any>();
+
     for (const p of existingProducts) {
-      productMap.set(p.sku.toUpperCase().trim(), p);
+      if (p.sku) {
+        productMap.set(p.sku.toUpperCase().trim(), p);
+      }
+      const attrKey = getProductMatchKey(p.brand, p.generic, p.strength, p.form);
+      if (!productAttrMap.has(attrKey)) {
+        productAttrMap.set(attrKey, p);
+      }
     }
 
     // 3. Fetch all existing batches for these products
@@ -471,22 +488,40 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
         const generic = item.genericName || item.generic;
         const sku = item.sku?.toString().trim();
 
-        if (!brand || !generic || !sku) {
-          throw new Error("SKU, Brand Name, and Generic Name are required");
+        if (!brand || !generic) {
+          continue;
         }
 
-        const skuUpper = sku.toUpperCase();
-        let product = productMap.get(skuUpper);
+        // Ignore summary/template rows
+        const upperBrand = brand.toUpperCase();
+        if (
+          upperBrand.includes("INVENTORY SUMMARY") ||
+          upperBrand.includes("GENERIC NAME") ||
+          upperBrand.includes("TOTAL SKU") ||
+          upperBrand.includes("TOTAL CURRENT")
+        ) {
+          continue;
+        }
+
+        const normalizedForm = normalizeForm(item.form);
+        const normalizedStrength = item.strength?.trim() || "N/A";
+        const skuUpper = sku ? sku.toUpperCase() : "";
+        const attrKey = getProductMatchKey(brand, generic, normalizedStrength, normalizedForm);
+
+        // Check duplicate by SKU FIRST, or by Name + Strength + Form
+        let product = (skuUpper ? productMap.get(skuUpper) : null) || productAttrMap.get(attrKey);
 
         if (product) {
+          // Existing product found -> MERGE stock
           const stockToAdd = Number(item.currentStock) || Number(item.stock) || 0;
           await (Product.updateOne(
             { _id: product._id },
             { $inc: { stock: stockToAdd } }
           ) as any).unscoped();
-          // Update local stock in productMap
+          // Update local stock
           product.stock = (product.stock || 0) + stockToAdd;
         } else {
+          // New product -> CREATE
           let supplierId: any = undefined;
           if (item.supplier) {
             const supplierStr = String(item.supplier).trim();
@@ -500,9 +535,9 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
           const productData = {
             brand: brand.trim(),
             generic: generic.trim(),
-            sku: sku,
-            strength: item.strength?.trim() || "N/A",
-            form: normalizeForm(item.form),
+            sku: sku || `SKU-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            strength: normalizedStrength,
+            form: normalizedForm,
             schedule: normalizeSchedule(item.schedule),
             mrp: Number(item.mrp) || 0,
             gstPercent: Number(item.gst) || Number(item.gstPercent) || 12,
@@ -521,7 +556,10 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
 
           const created = await Product.create(productData);
           product = created.toObject ? created.toObject() : created;
-          productMap.set(skuUpper, product);
+          if (product.sku) {
+            productMap.set(product.sku.toUpperCase(), product);
+          }
+          productAttrMap.set(attrKey, product);
         }
 
         const addedStock = Number(item.currentStock) || Number(item.stock) || 0;
@@ -655,30 +693,81 @@ export const bulkImportProducts = async (req: PharmaRequest, res: Response) => {
             };
 
             if (!productData.brand || !productData.generic) {
-              throw new Error(
-                `Row ${i + 1}: Brand and Generic Name are required`,
-              );
+              continue;
             }
 
-            const product = await Product.create(productData);
+            const upperBrand = productData.brand.toUpperCase();
+            if (
+              upperBrand.includes("INVENTORY SUMMARY") ||
+              upperBrand.includes("GENERIC NAME") ||
+              upperBrand.includes("TOTAL SKU") ||
+              upperBrand.includes("TOTAL CURRENT")
+            ) {
+              continue;
+            }
 
-            // Create initial batch if stock > 0
+            // Check if product already exists by SKU or Brand + Generic + Strength + Form
+            let existingProduct = await (Product.findOne({
+              pharmacy: pharmacyId,
+              $or: [
+                ...(productData.sku ? [{ sku: productData.sku.toUpperCase() }] : []),
+                {
+                  brand: { $regex: new RegExp("^" + productData.brand.trim() + "$", "i") },
+                  generic: { $regex: new RegExp("^" + productData.generic.trim() + "$", "i") },
+                  strength: { $regex: new RegExp("^" + (productData.strength || "N/A").trim() + "$", "i") },
+                  form: productData.form,
+                },
+              ],
+            }) as any).unscoped();
+
+            let targetProduct = existingProduct;
+
+            if (existingProduct) {
+              // Merge stock
+              if (productData.stock > 0) {
+                await (Product.updateOne(
+                  { _id: existingProduct._id },
+                  { $inc: { stock: productData.stock } }
+                ) as any).unscoped();
+              }
+            } else {
+              targetProduct = await Product.create({
+                ...productData,
+                sku: productData.sku || `SKU-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+              });
+            }
+
+            // Create initial batch or update existing batch if stock > 0
             if (
               productData.stock > 0 &&
               productData.batchNumber &&
               productData.expiryDate
             ) {
-              await Batch.create({
-                product: product._id,
-                batchNo: productData.batchNumber,
-                expiry: productData.expiryDate,
-                qtyReceived: productData.stock,
-                qtySold: 0,
-                unitCost: productData.unitCost,
-                supplier: supplierId,
+              const batchNoUpper = productData.batchNumber.toUpperCase().trim();
+              const existingBatch = await (Batch.findOne({
+                product: targetProduct._id,
+                batchNo: batchNoUpper,
                 pharmacy: pharmacyId,
-                hospital: hospitalId,
-              });
+              }) as any).unscoped();
+
+              if (existingBatch) {
+                await (Batch.updateOne(
+                  { _id: existingBatch._id },
+                  { $inc: { qtyReceived: productData.stock } }
+                ) as any).unscoped();
+              } else {
+                await Batch.create({
+                  product: targetProduct._id,
+                  batchNo: batchNoUpper,
+                  expiry: productData.expiryDate,
+                  qtyReceived: productData.stock,
+                  qtySold: 0,
+                  unitCost: productData.unitCost,
+                  supplier: supplierId,
+                  pharmacy: pharmacyId,
+                  hospital: hospitalId,
+                });
+              }
             }
 
             successCount++;

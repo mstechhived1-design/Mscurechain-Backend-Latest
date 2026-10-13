@@ -8,6 +8,7 @@ import BedOccupancy from "../Models/BedOccupancy.js";
 import LabOrder from "../../Lab/Models/LabOrder.js";
 import DietLog from "../Models/DietLog.js";
 import ApiError from "../../utils/ApiError.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 
 /**
  * Get Combined Hourly Monitoring Data for a Patient
@@ -24,7 +25,7 @@ export const getPatientHourlyRecord = asyncHandler(async (req: Request, res: Res
         ],
         hospital
     })
-        .populate({ path: "patient", select: "name mobile gender dateOfBirth" })
+        .populate({ path: "patient", select: "name mobile gender dateOfBirth honorific" })
         .populate({ path: "primaryDoctor", populate: { path: "user", select: "name" } });
 
     if (!admission) throw new ApiError(404, "Admission not found");
@@ -75,13 +76,18 @@ export const getPatientHourlyRecord = asyncHandler(async (req: Request, res: Res
         rate: occ.dailyRateAtTime
     }));
 
+    const patientHonorific = (admission.patient as any)?.honorific || (admission as any).honorific || (admission as any).patientHonorific;
+    const rawPatientName = (admission.patient as any)?.name || (admission as any).patientName || "Unknown Patient";
+    const formattedPatientName = formatPatientDisplayName(rawPatientName, patientHonorific);
+
     // Format the data for the consolidated view
     res.json({
         success: true,
         data: {
             admission: {
                 admissionId: admission.admissionId,
-                patientName: (admission.patient as any)?.name,
+                patientName: formattedPatientName,
+                honorific: patientHonorific,
                 doctorName: (admission.primaryDoctor as any)?.user?.name,
                 admissionDate: admission.admissionDate,
                 admissionType: admission.admissionType,

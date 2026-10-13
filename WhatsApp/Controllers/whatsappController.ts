@@ -84,35 +84,47 @@ export const updateTemplates = async (req: Request, res: Response) => {
 };
 
 export const sendMedia = async (req: Request, res: Response) => {
+  const hospitalId = getHospitalId(req);
   try {
-    const hospitalId = getHospitalId(req);
     const { phone, pdfBase64, imageBase64, caption, fileName } = req.body;
     
-    if (!hospitalId) return res.status(400).json({ error: "hospitalId required" });
-    if (!phone) return res.status(400).json({ error: "phone required" });
-    if (!pdfBase64 && !imageBase64) return res.status(400).json({ error: "pdfBase64 or imageBase64 required" });
+    if (!hospitalId) return res.status(400).json({ success: false, error: "hospitalId required" });
+    if (!phone) return res.status(400).json({ success: false, error: "phone required" });
+    if (!pdfBase64 && !imageBase64) return res.status(400).json({ success: false, error: "pdfBase64 or imageBase64 required" });
 
     const waService = whatsappManager.getInstance(hospitalId);
     await waService.sendMedia(phone, { pdfBase64, imageBase64, caption, fileName });
     res.json({ success: true, message: "Media sent successfully" });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error(`[WhatsApp sendMedia Error - ${hospitalId}]:`, error);
+    const errorMsg =
+      error?.output?.payload?.message ||
+      error?.message ||
+      (typeof error === 'string' ? error : '') ||
+      'Failed to send WhatsApp media';
+    res.status(500).json({ success: false, error: errorMsg });
   }
 };
 
 export const sendMessage = async (req: Request, res: Response) => {
+  const hospitalId = getHospitalId(req);
   try {
-    const hospitalId = getHospitalId(req);
     const { phone, message } = req.body;
     
-    if (!hospitalId) return res.status(400).json({ error: "hospitalId required" });
-    if (!phone) return res.status(400).json({ error: "phone required" });
-    if (!message) return res.status(400).json({ error: "message required" });
+    if (!hospitalId) return res.status(400).json({ success: false, error: "hospitalId required" });
+    if (!phone) return res.status(400).json({ success: false, error: "phone required" });
+    if (!message) return res.status(400).json({ success: false, error: "message required" });
 
     const waService = whatsappManager.getInstance(hospitalId);
     await waService.sendTextMessage(phone, message);
     res.json({ success: true, message: "Message sent successfully" });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error(`[WhatsApp sendMessage Error - ${hospitalId}]:`, error);
+    const errorMsg =
+      error?.output?.payload?.message ||
+      error?.message ||
+      (typeof error === 'string' ? error : '') ||
+      'Failed to send WhatsApp message';
+    res.status(500).json({ success: false, error: errorMsg });
   }
 };

@@ -28,6 +28,7 @@ import mongoose from "mongoose";
 import { IPayroll } from "../Staff/types/index.js";
 // FIX: Import decryptObject for manual decryption after .lean() queries where needed
 import { decryptObject } from "../utils/crypto.js";
+import { formatPatientDisplayName } from "../utils/identityResolver.js";
 
 export interface DashboardStats {
   totalDoctors: number;
@@ -972,6 +973,20 @@ export class HospitalAdminService {
                     "Unknown Patient",
                   ],
                 },
+                honorific: {
+                  $ifNull: [
+                    "$patientLookup.honorific",
+                    "$patientLookup.honorificTitle",
+                    "",
+                  ],
+                },
+                patientHonorific: {
+                  $ifNull: [
+                    "$patientLookup.honorific",
+                    "$patientLookup.honorificTitle",
+                    "",
+                  ],
+                },
                 patientDetails: "$patientLookup",
                 paymentDetails: "$paymentDetails",
                 phone: { $ifNull: ["$adm.phone", "$patientLookup.mobile"] },
@@ -1089,6 +1104,26 @@ export class HospitalAdminService {
                     "Unknown Patient",
                   ],
                 },
+                honorific: {
+                  $ifNull: [
+                    "$apptLookup.appointmentHonorific",
+                    "$apptLookup.honorific",
+                    "$apptLookup.patientDetails.honorific",
+                    "$patientLookup.honorific",
+                    "$patientLookup.honorificTitle",
+                    "",
+                  ],
+                },
+                patientHonorific: {
+                  $ifNull: [
+                    "$apptLookup.appointmentHonorific",
+                    "$apptLookup.honorific",
+                    "$apptLookup.patientDetails.honorific",
+                    "$patientLookup.honorific",
+                    "$patientLookup.honorificTitle",
+                    "",
+                  ],
+                },
                 patientDetails: { $ifNull: ["$patientLookup", "$apptLookup.patientDetails"] },
                 paymentDetails: 1,
                 phone: { $ifNull: ["$patientLookup.mobile", "$apptLookup.patientDetails.phone", "—"] },
@@ -1176,6 +1211,20 @@ export class HospitalAdminService {
                     "Unknown Patient",
                   ],
                 },
+                honorific: {
+                  $ifNull: [
+                    "$patientLookup.honorific",
+                    "$patientLookup.honorificTitle",
+                    "",
+                  ],
+                },
+                patientHonorific: {
+                  $ifNull: [
+                    "$patientLookup.honorific",
+                    "$patientLookup.honorificTitle",
+                    "",
+                  ],
+                },
                 patientDetails: "$patientLookup",
                 phone: {
                   $ifNull: [
@@ -1229,6 +1278,14 @@ export class HospitalAdminService {
               },
             },
             {
+              $lookup: {
+                from: "patientprofiles",
+                localField: "patient",
+                foreignField: "user",
+                as: "profileLookup",
+              },
+            },
+            {
               $project: {
                 _id: 1,
                 user: "$patient",
@@ -1263,7 +1320,55 @@ export class HospitalAdminService {
                     "Unknown Patient",
                   ],
                 },
-                patientDetails: { $ifNull: ["$patientDetails", { $arrayElemAt: ["$patientLookup", 0] }] },
+                honorific: {
+                  $ifNull: [
+                    "$appointmentHonorific",
+                    "$honorific",
+                    "$patientDetails.honorific",
+                    { $arrayElemAt: ["$profileLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorificTitle", 0] },
+                    "",
+                  ],
+                },
+                patientHonorific: {
+                  $ifNull: [
+                    "$appointmentHonorific",
+                    "$honorific",
+                    "$patientDetails.honorific",
+                    { $arrayElemAt: ["$profileLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorificTitle", 0] },
+                    "",
+                  ],
+                },
+                appointmentHonorific: {
+                  $ifNull: [
+                    "$appointmentHonorific",
+                    "$honorific",
+                    "$patientDetails.honorific",
+                    "",
+                  ],
+                },
+                patientDetails: {
+                  $mergeObjects: [
+                    { $ifNull: [{ $arrayElemAt: ["$patientLookup", 0] }, {}] },
+                    { $ifNull: [{ $arrayElemAt: ["$profileLookup", 0] }, {}] },
+                    { $ifNull: ["$patientDetails", {}] },
+                    {
+                      honorific: {
+                        $ifNull: [
+                          "$appointmentHonorific",
+                          "$honorific",
+                          "$patientDetails.honorific",
+                          { $arrayElemAt: ["$profileLookup.honorific", 0] },
+                          { $arrayElemAt: ["$patientLookup.honorific", 0] },
+                          "",
+                        ],
+                      },
+                    },
+                  ],
+                },
                 suggestedDoctorName: "$suggestedDoctorName",
                 disease: "$disease",
                 diagnosis: "$diagnosis",
@@ -1327,6 +1432,25 @@ export class HospitalAdminService {
               },
             },
             {
+              $lookup: {
+                from: "patientprofiles",
+                let: { pId: "$patient" },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $and: [
+                          { $eq: ["$user", "$$pId"] },
+                          { $in: ["$hospital", [hospitalObjId, hospitalId]] }
+                        ]
+                      }
+                    }
+                  }
+                ],
+                as: "profileLookup",
+              },
+            },
+            {
               $project: {
                 _id: 1,
                 user: "$patient",
@@ -1372,7 +1496,35 @@ export class HospitalAdminService {
                     "Unknown Patient",
                   ],
                 },
-                patientDetails: { $arrayElemAt: ["$patientLookup", 0] },
+                honorific: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$profileLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorificTitle", 0] },
+                    "",
+                  ],
+                },
+                patientHonorific: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$profileLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorific", 0] },
+                    { $arrayElemAt: ["$patientLookup.honorificTitle", 0] },
+                    "",
+                  ],
+                },
+                patientDetails: {
+                  $mergeObjects: [
+                    { $ifNull: [{ $arrayElemAt: ["$patientLookup", 0] }, {}] },
+                    { $ifNull: [{ $arrayElemAt: ["$profileLookup", 0] }, {}] }
+                  ]
+                },
+                patientMRN: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$profileLookup.mrn", 0] },
+                    { $arrayElemAt: ["$patientLookup.mrn", 0] },
+                    "N/A"
+                  ]
+                },
                 priority: { $literal: 1 },
                 // 🗓️ NORMALIZED SORT KEY: Lab — order creation time is when billing happens
                 sortDate: { $ifNull: ["$createdAt", "$updatedAt"] },
@@ -1825,6 +1977,40 @@ export class HospitalAdminService {
                   mobile: { $ifNull: ["$user.mobile", "$phone", "N/A"] },
                   mrn: { $ifNull: ["$user.mrn", "$mrn", "N/A"] },
                 },
+                patientName: {
+                  $ifNull: [
+                    "$patientName",
+                    "$referenceId.patientName",
+                    "$user.name",
+                    "Unknown Patient",
+                  ],
+                },
+                honorific: {
+                  $ifNull: [
+                    "$honorific",
+                    "$patientHonorific",
+                    "$appointmentHonorific",
+                    "$patientDetails.honorific",
+                    { $arrayElemAt: ["$profileData.honorific", 0] },
+                    { $arrayElemAt: ["$patientData.honorific", 0] },
+                    { $arrayElemAt: ["$patientData.honorificTitle", 0] },
+                    "",
+                  ],
+                },
+                patientHonorific: {
+                  $ifNull: [
+                    "$patientHonorific",
+                    "$honorific",
+                    "$appointmentHonorific",
+                    "$patientDetails.honorific",
+                    { $arrayElemAt: ["$profileData.honorific", 0] },
+                    { $arrayElemAt: ["$patientData.honorific", 0] },
+                    { $arrayElemAt: ["$patientData.honorificTitle", 0] },
+                    "",
+                  ],
+                },
+                appointmentHonorific: "$appointmentHonorific",
+                patientDetails: 1,
                 patientData: 1,
                 profileData: 1,
                 hospital: 1,
@@ -1846,6 +2032,18 @@ export class HospitalAdminService {
                   tests: "$tests",
                   primaryDoctor: "$resolvedDoctorName",
                   patientName: "$patientName", // 🔧 Pass through to controller
+                  honorific: {
+                    $ifNull: [
+                      "$honorific",
+                      "$patientHonorific",
+                      "$appointmentHonorific",
+                      "$patientDetails.honorific",
+                      { $arrayElemAt: ["$profileData.honorific", 0] },
+                      { $arrayElemAt: ["$patientData.honorific", 0] },
+                      "",
+                    ],
+                  },
+                  patientDetails: "$patientDetails",
                   phone: "$phone", // 🔧 Pass through to controller
                   suggestedDoctorName: "$suggestedDoctorName",
                   conditionAtDischarge: "$conditionAtDischarge",
@@ -1865,11 +2063,56 @@ export class HospitalAdminService {
 
     const result = await Transaction.aggregate(pipeline);
 
-    const transactions = (result[0].data || []).map((tx: any) => ({
-      ...tx,
-      patientName: tx.referenceId?.patientName || tx.user?.name || "Unknown",
-      patientMobile: tx.referenceId?.phone || tx.user?.mobile || "-",
-    }));
+    const transactions = (result[0].data || []).map((tx: any) => {
+      const placeholders = [
+        "unknown",
+        "unnamed",
+        "debug",
+        "n/a",
+        "unknown patient",
+        "unnamed patient",
+        "",
+      ];
+      const possibleNames = [
+        tx.patientName,
+        tx.referenceId?.patientName,
+        tx.patientDetails?.name,
+        tx.referenceId?.patientDetails?.name,
+        tx.user?.name,
+        tx.patientData?.[0]?.name,
+      ];
+      let rawName = "Unknown Patient";
+      for (const name of possibleNames) {
+        if (name && !placeholders.includes(name.toLowerCase().trim())) {
+          rawName = name;
+          break;
+        }
+      }
+
+      const honorific =
+        tx.honorific ||
+        tx.patientHonorific ||
+        tx.appointmentHonorific ||
+        tx.patientDetails?.honorific ||
+        tx.referenceId?.patientDetails?.honorific ||
+        tx.referenceId?.appointmentHonorific ||
+        tx.referenceId?.honorific ||
+        tx.profileData?.[0]?.honorific ||
+        tx.patientData?.[0]?.honorific ||
+        tx.patientData?.[0]?.honorificTitle ||
+        tx.user?.honorific ||
+        "";
+
+      const formattedPatientName = formatPatientDisplayName(rawName, honorific);
+
+      return {
+        ...tx,
+        honorific,
+        patientHonorific: honorific,
+        patientName: formattedPatientName,
+        patientMobile: tx.referenceId?.phone || tx.user?.mobile || "-",
+      };
+    });
 
     const total = result[0].metadata[0]?.total || 0;
     const totalRevenue = result[0].stats[0]?.totalAmount || 0;
@@ -3289,7 +3532,7 @@ export class HospitalAdminService {
     })
       .sort({ date: 1, updatedAt: -1 })
       .limit(10)
-      .populate("patient", "name")
+      .populate("patient", "name honorific")
       .populate({
         path: "doctor",
         populate: { path: "user", select: "name" },
@@ -3297,7 +3540,11 @@ export class HospitalAdminService {
 
     return appointments.map((apt: any) => ({
       _id: apt._id,
-      patientName: apt.patient?.name || "Anonymous",
+      patientName:
+        formatPatientDisplayName(
+          apt.patient?.name,
+          apt.appointmentHonorific || apt.patient?.honorific || apt.patientDetails?.honorific
+        ) || "Anonymous",
       doctorName: apt.doctor?.user?.name || "Unassigned",
       status: apt.status,
       time:
@@ -3600,7 +3847,7 @@ export class HospitalAdminService {
       type: { $nin: ["IPD", "ipd", "Inpatient", "inpatient"] },
       visitType: { $nin: ["IPD", "ipd", "Inpatient", "inpatient"] },
       isIPD: { $ne: true }
-    }).populate("patient", "name").lean();
+    }).populate("patient", "name honorific").lean();
 
     opdApps.forEach((app: any) => {
       const amt = app.payment?.amount || app.amount || 0;
@@ -3609,7 +3856,11 @@ export class HospitalAdminService {
       if (status === "pending" || status === "Pending") pMode = "DUE";
 
       transactions.push({
-        patientName: app.patient?.name || app.patientName || "Walk-in Patient",
+        patientName:
+          formatPatientDisplayName(
+            app.patient?.name || app.patientName,
+            app.patient?.honorific || app.appointmentHonorific || app.patientDetails?.honorific
+          ) || "Walk-in Patient",
         date: app.date || app.createdAt,
         module: "OPD",
         amount: amt,
@@ -3648,7 +3899,11 @@ export class HospitalAdminService {
         }
 
         transactions.push({
-          patientName: order.patientDoc?.name || "Lab Patient",
+          patientName:
+            formatPatientDisplayName(
+              order.patientDoc?.name,
+              order.patientDoc?.honorific || order.patientDetails?.honorific
+            ) || "Lab Patient",
           date: order.createdAt,
           module: "LAB",
           amount: amt,
@@ -3680,7 +3935,11 @@ export class HospitalAdminService {
       if (inv.status === "PENDING" || inv.status === "Pending") pMode = "DUE";
 
       transactions.push({
-        patientName: inv.patientDoc?.name || inv.patientName || "Pharmacy Patient",
+        patientName:
+          formatPatientDisplayName(
+            inv.patientDoc?.name || inv.patientName,
+            inv.patientDoc?.honorific || inv.honorific || inv.patientDetails?.honorific
+          ) || "Pharmacy Patient",
         date: inv.createdAt,
         module: "PHARMACY",
         amount: amt,
@@ -3709,10 +3968,16 @@ export class HospitalAdminService {
     ]);
 
     ipdAdmissions.forEach((adm: any) => {
+      const ipdPatientName =
+        formatPatientDisplayName(
+          adm.patientDoc?.name,
+          adm.patientDoc?.honorific || adm.honorific || adm.patientDetails?.honorific
+        ) || "IPD Patient";
+
       // Advance Payment
       if (adm.advancePaid > 0) {
         transactions.push({
-          patientName: adm.patientDoc?.name || "IPD Patient",
+          patientName: ipdPatientName,
           date: adm.createdAt,
           module: "IPD",
           amount: adm.advancePaid,
@@ -3724,7 +3989,7 @@ export class HospitalAdminService {
       // Discharge Payment
       if (adm.discharge && adm.discharge.finalPayment > 0) {
         transactions.push({
-          patientName: adm.patientDoc?.name || "IPD Patient",
+          patientName: ipdPatientName,
           date: adm.discharge.createdAt || adm.discharge.dischargeDate || adm.updatedAt,
           module: "IPD",
           amount: adm.discharge.finalPayment,

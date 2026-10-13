@@ -63,6 +63,7 @@ export const createPrescription = async (
       suggestedTests,
       avoid,
       followUpDate,
+      followUpTime,
       notes,
       aiGenerated,
       admissionId,
@@ -184,6 +185,7 @@ export const createPrescription = async (
       suggestedTests: suggestedTests || [],
       avoid: avoid || [],
       followUpDate: followUpDate || null,
+      followUpTime: followUpTime || null,
       notes: notes || "",
       aiGenerated: aiGenerated || false,
     });
