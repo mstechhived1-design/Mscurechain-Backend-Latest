@@ -35,6 +35,19 @@ export const createNotification = async (
   }: CreateNotificationParams,
 ) => {
   try {
+    let cleanMsg = message;
+    if (typeof cleanMsg === "string") {
+      cleanMsg = cleanMsg.replace(/\b(dr\.?)\s*(dr\.?)+/gi, "Dr.");
+      cleanMsg = cleanMsg.replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (_m: string, p1: string, p2: string, y: string) => {
+        const n1 = parseInt(p1, 10);
+        const n2 = parseInt(p2, 10);
+        if (n1 <= 12 && n2 > 12) {
+          return `${String(n2).padStart(2, "0")}/${String(n1).padStart(2, "0")}/${y}`;
+        }
+        return _m;
+      });
+    }
+
     const notification: any = await Notification.create({
       hospital: hospital || (req as any)?.user?.hospital,
       recipient,
@@ -42,7 +55,7 @@ export const createNotification = async (
       sender,
       senderModel: senderModel || "User",
       type,
-      message,
+      message: cleanMsg,
       relatedId,
     });
 
@@ -72,14 +85,9 @@ export const createNotification = async (
         const userRole = (user as any).role || "patient";
         const userRoom = `${userRole}_${recipient.toString()}`;
         io.to(userRoom).emit("notification:new", notifPayload);
-      }
-      // Also emit to direct recipient ID room
-      io.to(recipient.toString()).emit("notification:new", notifPayload);
-
-      // Also emit to hospital room for real-time dashboard updates
-      const hospId = hospital || (req as any)?.user?.hospital;
-      if (hospId) {
-        io.to(`hospital_${hospId.toString()}`).emit("notification:new", notifPayload);
+      } else {
+        // Fallback to direct recipient ID room
+        io.to(recipient.toString()).emit("notification:new", notifPayload);
       }
     }
 
@@ -108,7 +116,47 @@ export const getNotifications = async (
     const notifications = await Notification.find(query).sort(
       { createdAt: -1 },
     );
-    res.json(notifications);
+
+    // Sanitize messages for display (fix Dr. Dr. duplicate prefix and format MM/DD/YYYY to DD/MM/YYYY)
+    const sanitizedNotifications = notifications.map((notif: any) => {
+      const obj = notif.toObject ? notif.toObject() : { ...notif };
+      if (typeof obj.message === "string") {
+        obj.message = obj.message.replace(/\b(dr\.?)\s*(dr\.?)+/gi, "Dr.");
+        obj.message = obj.message.replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (_m: string, p1: string, p2: string, y: string) => {
+          const n1 = parseInt(p1, 10);
+          const n2 = parseInt(p2, 10);
+          if (n1 <= 12 && n2 > 12) {
+            return `${String(n2).padStart(2, "0")}/${String(n1).padStart(2, "0")}/${y}`;
+          }
+          return _m;
+        });
+      }
+      return obj;
+    });
+
+    // Auto-heal existing records in DB in the background
+    try {
+      const needsFix = notifications.filter((n: any) =>
+        typeof n.message === "string" && (/Dr\.\s*Dr\./i.test(n.message) || /\b(0?[1-9]|1[0-2])\/(1[3-9]|[23][0-9])\/\d{4}\b/.test(n.message))
+      );
+      if (needsFix.length > 0) {
+        for (const notif of needsFix) {
+          const fixedMsg = notif.message
+            .replace(/\b(dr\.?)\s*(dr\.?)+/gi, "Dr.")
+            .replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (m: string, p1: string, p2: string, y: string) => {
+              const n1 = parseInt(p1, 10);
+              const n2 = parseInt(p2, 10);
+              if (n1 <= 12 && n2 > 12) {
+                return `${String(n2).padStart(2, "0")}/${String(n1).padStart(2, "0")}/${y}`;
+              }
+              return m;
+            });
+          Notification.findByIdAndUpdate(notif._id, { $set: { message: fixedMsg } }).catch(() => {});
+        }
+      }
+    } catch (_) {}
+
+    res.json(sanitizedNotifications);
   } catch (err) {
     console.error("getNotifications error:", err);
     res.status(500).json({ message: "Server error" });

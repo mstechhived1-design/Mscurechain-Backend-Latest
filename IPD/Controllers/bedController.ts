@@ -15,6 +15,7 @@ import ApiError from "../../utils/ApiError.js";
 import fs from "fs";
 import csv from "csv-parser";
 import redisService from "../../config/redis.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 
 const escapeRegex = (string: string) => {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -230,15 +231,19 @@ export const listBeds = asyncHandler(async (req: any, res: Response) => {
             .sort({ startDate: -1 })
             .populate({
               path: "admission",
-              populate: { path: "patient", select: "name" },
+              populate: { path: "patient", select: "name honorific" },
             });
 
           if (occupancy?.admission && typeof occupancy.admission === "object") {
             const adm = occupancy.admission as any;
+            const patientName = formatPatientDisplayName(
+              adm.patient?.name || "Unknown",
+              adm.patient?.honorific || adm.honorific || adm.patientHonorific
+            );
             return {
               ...(bed.toObject ? bed.toObject() : bed),
               currentOccupancy: {
-                patientName: adm.patient?.name || "Unknown",
+                patientName: patientName || "Unknown",
                 admissionId: adm.admissionId,
                 admissionDate: adm.admissionDate,
                 lastVitalsRecordedAt: adm.vitals?.lastVitalsRecordedAt,
@@ -297,7 +302,7 @@ export const getBedDetails = asyncHandler(
         .populate({
           path: "admission",
           populate: [
-            { path: "patient", select: "name mobile" },
+            { path: "patient", select: "name mobile honorific" },
             {
               path: "primaryDoctor",
               populate: { path: "user", select: "name" },
@@ -321,17 +326,25 @@ export const getBedDetails = asyncHandler(
             })
             : null;
 
-          let resolvedPatient = adm.patient;
+          let resolvedPatient = adm.patient ? (adm.patient.toObject ? adm.patient.toObject() : { ...adm.patient }) : null;
           if (profile && (!resolvedPatient || !resolvedPatient.name)) {
             const user = await User.findById(profile.user).select(
-              "name mobile",
+              "name mobile honorific",
             );
             if (user)
               resolvedPatient = {
                 _id: user._id,
                 name: user.name,
                 mobile: user.mobile,
+                honorific: (user as any)?.honorific || (profile as any)?.honorific,
               };
+          }
+
+          if (resolvedPatient && resolvedPatient.name) {
+            resolvedPatient.name = formatPatientDisplayName(
+              resolvedPatient.name,
+              resolvedPatient.honorific || profile?.honorific || adm?.honorific
+            );
           }
 
           // Billing Calculation (Pro-rated for short occupancies)

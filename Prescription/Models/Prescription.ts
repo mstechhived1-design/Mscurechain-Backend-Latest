@@ -33,6 +33,7 @@ export interface IPrescription extends Document {
   suggestedTests?: string[];
   avoid?: string[];
   followUpDate?: Date;
+  followUpTime?: string;
   followUpRemindersSent: number;
   notes?: string;
   aiGenerated: boolean;
@@ -88,6 +89,7 @@ const PrescriptionSchema: Schema = new Schema(
     suggestedTests: [{ type: String }],
     avoid: [{ type: String }],
     followUpDate: { type: Date },
+    followUpTime: { type: String },
     followUpRemindersSent: { type: Number, default: 0 },
     notes: { type: String },
 

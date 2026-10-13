@@ -21,6 +21,7 @@ import {
   deleteLabTest,
   deleteAllLabTests,
   deleteLabOrder,
+  updateLabOrder,
   createDepartment,
   updateDepartment,
   deleteDepartment,
@@ -192,6 +193,11 @@ router.delete(
   "/orders/:id",
   authorizeRoles("lab", "hospital-admin", "super-admin", "doctor"),
   deleteLabOrder,
+);
+router.put(
+  "/orders/:id",
+  authorizeRoles("lab", "hospital-admin", "super-admin", "doctor", "helpdesk", "frontdesk"),
+  updateLabOrder,
 );
 router.get(
   "/orders/:id",

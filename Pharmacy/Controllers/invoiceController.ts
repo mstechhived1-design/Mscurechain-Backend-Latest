@@ -10,6 +10,7 @@ import Transaction from "../../Admin/Models/Transaction.js";
 import mongoose from "mongoose";
 import redisService from "../../config/redis.js";
 import { generatePharmaId } from "../utils/idGenerator.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 
 export const getInvoices = async (req: PharmaRequest, res: Response) => {
   try {
@@ -186,6 +187,142 @@ export const getInvoices = async (req: PharmaRequest, res: Response) => {
     const paginatedRecords = allRecords.slice(0, Number(limit));
     const total = totalInvoices + mappedIpd.length;
 
+    // Resolve MRNs and Honorifics for pharmacy records
+    const isMongoId = (val?: string) => typeof val === "string" && /^[0-9a-fA-F]{24}$/.test(val);
+    const phones = paginatedRecords
+      .map((inv: any) => (inv.customerPhone || inv.patient?.mobile || "").replace(/[^0-9]/g, "").slice(-10))
+      .filter((p: string) => p.length === 10);
+    const mrns = paginatedRecords
+      .map((inv: any) => inv.mrn)
+      .filter((m: any) => m && m !== "N/A" && !isMongoId(m));
+
+    if (phones.length > 0 || mrns.length > 0) {
+      const Patient = mongoose.model("Patient");
+      const PatientProfile = mongoose.model("PatientProfile");
+
+      const [patients, profiles, appointments] = await Promise.all([
+        Patient.find({
+          $or: [
+            ...(mrns.length > 0 ? [{ mrn: { $in: mrns } }] : []),
+            ...(phones.length > 0 ? [
+              { mobile: { $in: phones } },
+              { mobile: { $in: phones.map((p: string) => "91" + p) } },
+              { mobile: { $in: phones.map((p: string) => "+91" + p) } }
+            ] : [])
+          ]
+        }).select("_id name mobile mrn honorific gender").lean().catch(() => []),
+
+        (PatientProfile.find({
+          $or: [
+            ...(mrns.length > 0 ? [{ mrn: { $in: mrns } }] : []),
+            ...(phones.length > 0 ? [
+              { contactNumber: { $in: phones } },
+              { contactNumber: { $in: phones.map((p: string) => "91" + p) } },
+              { contactNumber: { $in: phones.map((p: string) => "+91" + p) } }
+            ] : [])
+          ]
+        }) as any).unscoped().select("user hospital mrn honorific contactNumber gender name").lean().catch(() => []),
+
+        (async () => {
+          try {
+            const AppointmentModel = (await import("../../Appointment/Models/Appointment.js")).default;
+            return await AppointmentModel.find({
+              $or: [
+                ...(mrns.length > 0 ? [{ "patientDetails.mrn": { $in: mrns } }] : []),
+                ...(phones.length > 0 ? [
+                  { "patientDetails.mobile": { $in: phones } },
+                  { "patientDetails.mobile": { $in: phones.map((p: string) => "+91" + p) } },
+                  { "patientDetails.mobile": { $in: phones.map((p: string) => "91" + p) } }
+                ] : [])
+              ]
+            }).select("patientDetails honorific appointmentHonorific mrn").lean();
+          } catch (e) {
+            return [];
+          }
+        })()
+      ]);
+
+      const rawHospIdStr = (req.pharma?.hospital || req.headers["x-hospital-id"] || "")?.toString();
+      (profiles as any[]).sort((a: any, b: any) => {
+        const aMatch = a.hospital?.toString() === rawHospIdStr ? 1 : 0;
+        const bMatch = b.hospital?.toString() === rawHospIdStr ? 1 : 0;
+        return bMatch - aMatch;
+      });
+
+      const mrnToHonorific = new Map<string, string>();
+      const phoneToHonorific = new Map<string, string>();
+      const phoneToMrn = new Map<string, string>();
+
+      for (const prof of (profiles as any[])) {
+        const cleanP = (prof.contactNumber || "").replace(/[^0-9]/g, "").slice(-10);
+        if (prof.mrn) {
+          if (prof.honorific && !mrnToHonorific.has(prof.mrn)) mrnToHonorific.set(prof.mrn, prof.honorific);
+          if (cleanP && !phoneToMrn.has(cleanP)) phoneToMrn.set(cleanP, prof.mrn);
+        }
+        if (cleanP && prof.honorific && !phoneToHonorific.has(cleanP)) {
+          phoneToHonorific.set(cleanP, prof.honorific);
+        }
+      }
+
+      for (const pat of (patients as any[])) {
+        const cleanP = (pat.mobile || "").replace(/[^0-9]/g, "").slice(-10);
+        if (pat.mrn) {
+          if (pat.honorific && !mrnToHonorific.has(pat.mrn)) mrnToHonorific.set(pat.mrn, pat.honorific);
+          if (cleanP && !phoneToMrn.has(cleanP)) phoneToMrn.set(cleanP, pat.mrn);
+        }
+        if (cleanP && pat.honorific && !phoneToHonorific.has(cleanP)) {
+          phoneToHonorific.set(cleanP, pat.honorific);
+        }
+      }
+
+      for (const app of (appointments as any[])) {
+        const cleanP = (app.patientDetails?.mobile || "").replace(/[^0-9]/g, "").slice(-10);
+        const m = app.patientDetails?.mrn || app.mrn;
+        const hon = app.patientDetails?.honorific || app.appointmentHonorific || app.honorific;
+        if (m && hon && !mrnToHonorific.has(m)) mrnToHonorific.set(m, hon);
+        if (cleanP && hon && !phoneToHonorific.has(cleanP)) phoneToHonorific.set(cleanP, hon);
+        if (cleanP && m && !phoneToMrn.has(cleanP)) phoneToMrn.set(cleanP, m);
+      }
+
+      paginatedRecords.forEach((inv: any) => {
+        const cleanP = (inv.customerPhone || inv.patient?.mobile || "").replace(/[^0-9]/g, "").slice(-10);
+        if (!inv.mrn || inv.mrn === "N/A" || isMongoId(inv.mrn)) {
+          if (cleanP && phoneToMrn.has(cleanP)) {
+            inv.mrn = phoneToMrn.get(cleanP);
+          }
+        }
+
+        const resolvedHonorific =
+          inv.honorific ||
+          (inv.mrn && mrnToHonorific.get(inv.mrn)) ||
+          (cleanP && phoneToHonorific.get(cleanP)) ||
+          inv.patient?.honorific ||
+          inv.patientDetails?.honorific ||
+          "";
+
+        if (resolvedHonorific) {
+          inv.honorific = resolvedHonorific;
+        }
+
+        if (inv.patientName) {
+          inv.patientName = formatPatientDisplayName(inv.patientName, resolvedHonorific);
+        }
+
+        inv.patientDetails = {
+          name: inv.patientName,
+          honorific: resolvedHonorific || "",
+          mobile: inv.customerPhone,
+          mrn: inv.mrn
+        };
+
+        if (inv.patient && typeof inv.patient === "object") {
+          inv.patient.name = inv.patientName;
+          inv.patient.honorific = resolvedHonorific || "";
+          inv.patient.mrn = inv.mrn;
+        }
+      });
+    }
+
     res.json({
       success: true,
       count: paginatedRecords.length,
@@ -217,27 +354,45 @@ export const getInvoiceById = async (req: PharmaRequest, res: Response) => {
       return res.status(404).json({ message: "Invoice not found" });
     }
 
-    if (!invoice.mrn || invoice.mrn === "N/A" || /^[0-9a-fA-F]{24}$/.test(invoice.mrn)) {
-      try {
-        const User = mongoose.model("User");
-        const PatientProfile = mongoose.model("PatientProfile");
-        if (invoice.customerPhone) {
-          const cleanPhone = invoice.customerPhone.replace(/[^0-9]/g, "").slice(-10);
-          const patientUser: any = await User.findOne({
-            $or: [{ mobile: invoice.customerPhone }, { mobile: cleanPhone }]
-          }).lean();
-          if (patientUser) {
-            const profile: any = await (PatientProfile.findOne({ user: patientUser._id }) as any).unscoped().lean();
-            if (profile?.mrn) {
-              (invoice as any).mrn = profile.mrn;
-            } else if (patientUser.mrn) {
-              (invoice as any).mrn = patientUser.mrn;
-            }
-          }
-        }
-      } catch (e) {
-        // ignore fallback errors
+    try {
+      const Patient = mongoose.model("Patient");
+      const PatientProfile = mongoose.model("PatientProfile");
+      const cleanPhone = (invoice.customerPhone || "").replace(/[^0-9]/g, "").slice(-10);
+      const queryMrn = (invoice.mrn && !/^[0-9a-fA-F]{24}$/.test(invoice.mrn) && invoice.mrn !== "N/A") ? invoice.mrn : null;
+
+      let resolvedHonorific = (invoice as any).honorific;
+      let resolvedMrn = queryMrn;
+
+      const orClauses: any[] = [];
+      if (queryMrn) orClauses.push({ mrn: queryMrn });
+      if (cleanPhone) {
+        orClauses.push({ mobile: cleanPhone });
+        orClauses.push({ mobile: "+91" + cleanPhone });
+        orClauses.push({ contactNumber: cleanPhone });
+        orClauses.push({ contactNumber: "+91" + cleanPhone });
       }
+
+      if (orClauses.length > 0) {
+        const pat: any = await Patient.findOne({ $or: orClauses.filter(c => c.mobile || c.mrn) }).lean();
+        if (pat) {
+          if (pat.honorific && !resolvedHonorific) resolvedHonorific = pat.honorific;
+          if (pat.mrn && (!resolvedMrn || resolvedMrn === "N/A")) resolvedMrn = pat.mrn;
+        }
+
+        const prof: any = await (PatientProfile.findOne({ $or: orClauses.filter(c => c.contactNumber || c.mrn) }) as any).unscoped().lean();
+        if (prof) {
+          if (prof.honorific && !resolvedHonorific) resolvedHonorific = prof.honorific;
+          if (prof.mrn && (!resolvedMrn || resolvedMrn === "N/A")) resolvedMrn = prof.mrn;
+        }
+      }
+
+      if (resolvedHonorific) (invoice as any).honorific = resolvedHonorific;
+      if (resolvedMrn) (invoice as any).mrn = resolvedMrn;
+      if (invoice.patientName) {
+        (invoice as any).patientName = formatPatientDisplayName(invoice.patientName, (invoice as any).honorific);
+      }
+    } catch (e) {
+      // ignore fallback errors
     }
 
     res.json({ success: true, data: invoice });
@@ -479,10 +634,52 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
     // Generate Structured Invoice Number (PREFIX-RAND-SEQ)
     const invoiceNo = await generatePharmaId(pharmacyId, req.pharma?.businessName || "PHARMA", "invoice", session);
 
+    let resolvedMrn = req.body.mrn;
+    let resolvedHonorific = req.body.honorific;
+    const isMongoIdVal = (val?: string) => typeof val === "string" && /^[0-9a-fA-F]{24}$/.test(val);
+    if (!resolvedMrn || resolvedMrn === "N/A" || isMongoIdVal(resolvedMrn) || !resolvedHonorific) {
+      if (customerPhone) {
+        const cleanPhone = customerPhone.replace(/[^0-9]/g, "").slice(-10);
+        const Patient = mongoose.model("Patient");
+        const PatientProfile = mongoose.model("PatientProfile");
+
+        const pat: any = await Patient.findOne({
+          $or: [
+            ...(resolvedMrn && !isMongoIdVal(resolvedMrn) ? [{ mrn: resolvedMrn }] : []),
+            { mobile: customerPhone },
+            { mobile: cleanPhone },
+            { mobile: "91" + cleanPhone },
+            { mobile: "+91" + cleanPhone }
+          ]
+        }).session(session).lean();
+        if (pat) {
+          if (!resolvedMrn && pat.mrn) resolvedMrn = pat.mrn;
+          if (!resolvedHonorific && pat.honorific) resolvedHonorific = pat.honorific;
+        }
+
+        const profile: any = await (PatientProfile.findOne({
+          $or: [
+            ...(resolvedMrn && !isMongoIdVal(resolvedMrn) ? [{ mrn: resolvedMrn }] : []),
+            { contactNumber: customerPhone },
+            { contactNumber: cleanPhone },
+            { contactNumber: "+91" + cleanPhone },
+            ...(pat?._id ? [{ user: pat._id }] : [])
+          ],
+          ...(hospitalId ? { hospital: hospitalId } : {})
+        }) as any).unscoped().session(session).lean();
+        if (profile) {
+          if (!resolvedMrn && profile.mrn) resolvedMrn = profile.mrn;
+          if (!resolvedHonorific && profile.honorific) resolvedHonorific = profile.honorific;
+        }
+      }
+    }
+
     const invoice = await PharmaInvoice.create(
       [
         {
           ...req.body,
+          mrn: resolvedMrn || req.body.mrn || "N/A",
+          honorific: resolvedHonorific || req.body.honorific || "",
           invoiceNo,
           items: processedItems,
           subTotal,

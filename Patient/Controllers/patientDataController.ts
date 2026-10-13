@@ -104,7 +104,7 @@ export const getPatientAppointments = async (req: Request, res: Response) => {
       .populate("hospital", "name address logo phone city")
       .populate(
         "prescription",
-        "diagnosis medicines prescriptionDate followUpDate",
+        "diagnosis medicines prescriptionDate followUpDate followUpTime",
       )
       .populate("labToken", "tokenNumber status tests priority")
       .sort({ date: -1, createdAt: -1 })

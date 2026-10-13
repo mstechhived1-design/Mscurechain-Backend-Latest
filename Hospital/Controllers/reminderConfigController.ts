@@ -12,11 +12,13 @@ export const getReminderConfig = async (req: any, res: Response) => {
         if (!config) {
             config = new ReminderConfiguration({
                 hospital: hospitalId,
+                enablePortalReminders: true,
+                enableWhatsAppReminders: true,
                 opdReminderSlots: [
-                    { hour: 8, minute: 0 },
-                    { hour: 13, minute: 0 },
-                    { hour: 16, minute: 20 },
-                    { hour: 19, minute: 0 }
+                    { hour: 9, minute: 0, isEnabled: true },
+                    { hour: 13, minute: 0, isEnabled: true },
+                    { hour: 16, minute: 20, isEnabled: true },
+                    { hour: 19, minute: 0, isEnabled: true }
                 ],
                 ipdReminderDays: [2, 1]
             });
@@ -33,16 +35,20 @@ export const updateReminderConfig = async (req: any, res: Response) => {
         const hospitalId = req.user?.hospital;
         if (!hospitalId) return res.status(400).json({ message: 'Hospital ID not found' });
 
-        const { opdReminderSlots, ipdReminderDays, isActive } = req.body;
+        const { opdReminderSlots, ipdReminderDays, isActive, enablePortalReminders, enableWhatsAppReminders } = req.body;
+
+        const updateData: any = {
+            opdReminderSlots,
+            ipdReminderDays,
+        };
+        if (typeof isActive === 'boolean') updateData.isActive = isActive;
+        if (typeof enablePortalReminders === 'boolean') updateData.enablePortalReminders = enablePortalReminders;
+        if (typeof enableWhatsAppReminders === 'boolean') updateData.enableWhatsAppReminders = enableWhatsAppReminders;
 
         const config = await ReminderConfiguration.findOneAndUpdate(
             { hospital: hospitalId },
-            {
-                opdReminderSlots,
-                ipdReminderDays,
-                isActive
-            },
-            { upsert: true, new: true }
+            { $set: updateData },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
         );
 
         // TRIGGER: Run reminders immediately after update so user sees instant results

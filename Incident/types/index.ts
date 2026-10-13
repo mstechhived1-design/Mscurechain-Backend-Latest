@@ -16,6 +16,7 @@ export interface IIncident extends Document {
         mrnNumber: string;
         bedNumber: string;
         roomNumber: string;
+        honorific?: string;
     };
     equipmentFailureDetails?: {
         equipmentName: string;

@@ -617,7 +617,7 @@ export const getActiveAdmissions = asyncHandler(
     );
 
     const admissions = await IPDAdmission.find(query)
-      .populate({ path: "patient", select: "name mobile gender dateOfBirth role" })
+      .populate({ path: "patient", select: "name mobile gender dateOfBirth role honorific" })
       .populate({
         path: "primaryDoctor",
         populate: { path: "user", select: "name" },
@@ -705,6 +705,7 @@ export const getActiveAdmissions = asyncHandler(
           mrn: patientProfile?.mrn || "N/A",
           gender: activePatient?.gender || patientProfile?.gender,
           dateOfBirth: activePatient?.dateOfBirth || patientProfile?.dob || (patientProfile as any)?.dateOfBirth,
+          honorific: activePatient?.honorific || patientProfile?.honorific || "",
        };
 
        // Resolve Bed Details from map

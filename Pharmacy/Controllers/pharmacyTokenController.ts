@@ -244,7 +244,7 @@ export const getHospitalPharmacyOrders = async (
     }
 
     const pharmacyOrdersUnenriched = await PharmacyOrder.find(query)
-      .populate("patient", "name mobile email age gender")
+      .populate("patient", "name mobile email age gender honorific ageUnit")
       .populate({
         path: "doctor",
         populate: { path: "user", select: "name" },
@@ -262,23 +262,29 @@ export const getHospitalPharmacyOrders = async (
         // Fallback Logic for demographics
         let age = order.patientAge || order.patient?.age || (order.prescription?.appointment as any)?.patientDetails?.age;
         let gender = order.patientGender || order.patient?.gender || (order.prescription?.appointment as any)?.patientDetails?.gender;
+        let honorific = (order.prescription?.appointment as any)?.patientDetails?.honorific || (order.prescription?.appointment as any)?.honorific || order.patient?.honorific;
+        let ageUnit = order.patient?.ageUnit || (order.prescription?.appointment as any)?.patientDetails?.ageUnit;
 
         // Severe Fallback: If still missing, check most recent appointment for this patient
-        if ((!age || !gender) && order.patient?._id) {
+        if ((!age || !gender || !honorific) && order.patient?._id) {
           const lastAppt = await Appointment.findOne({ patient: order.patient._id })
             .sort({ createdAt: -1 })
-            .select("patientDetails")
+            .select("patientDetails honorific")
             .lean();
           if (lastAppt?.patientDetails) {
             if (!age) age = lastAppt.patientDetails.age;
             if (!gender) gender = lastAppt.patientDetails.gender;
+            if (!honorific) honorific = lastAppt.patientDetails.honorific || (lastAppt as any).honorific;
+            if (!ageUnit) ageUnit = (lastAppt.patientDetails as any).ageUnit;
 
             // Self-healing: Update Patient model so it's fixed for next time
-            if (age || gender) {
+            if (age || gender || honorific) {
               Patient.findByIdAndUpdate(order.patient._id, {
                 $set: {
                   ...(age && !order.patient.age && { age: parseInt(String(age)) }),
-                  ...(gender && !order.patient.gender && { gender: String(gender).charAt(0).toUpperCase() + String(gender).slice(1).toLowerCase() })
+                  ...(gender && !order.patient.gender && { gender: String(gender).charAt(0).toUpperCase() + String(gender).slice(1).toLowerCase() }),
+                  ...(honorific && !order.patient.honorific && { honorific }),
+                  ...(ageUnit && !order.patient.ageUnit && { ageUnit })
                 }
               }).exec().catch(err => console.error("Self-healing update failed:", err));
             }
@@ -296,7 +302,9 @@ export const getHospitalPharmacyOrders = async (
             patientGender: finalGender,
             patientType: "OPD",
             mrn: "N/A",
-            address: "N/A"
+            address: "N/A",
+            honorific: honorific || "",
+            patientAgeUnit: ageUnit || ""
           };
         }
 
@@ -308,8 +316,15 @@ export const getHospitalPharmacyOrders = async (
           }).select("admissionId status").lean(),
           PatientProfile.findOne({
             user: order.patient._id
-          }).select("mrn address").lean()
+          }).select("mrn address honorific ageUnit").lean()
         ]);
+
+        if (!honorific && patientProfile?.honorific) {
+          honorific = patientProfile.honorific;
+        }
+        if (!ageUnit && (patientProfile as any)?.ageUnit) {
+          ageUnit = (patientProfile as any).ageUnit;
+        }
 
         const patientType = activeDoc ? "IPD" : "OPD";
         const mrn = patientProfile?.mrn || "N/A";
@@ -317,6 +332,13 @@ export const getHospitalPharmacyOrders = async (
 
         return {
           ...order,
+          patient: order.patient ? {
+            ...order.patient,
+            honorific: honorific || order.patient.honorific,
+            ageUnit: ageUnit || order.patient.ageUnit,
+          } : order.patient,
+          honorific: honorific || order.patient?.honorific || "",
+          patientAgeUnit: ageUnit || order.patient?.ageUnit || "",
           isIPD: !!activeDoc,
           admissionId: activeDoc ? activeDoc.admissionId : undefined,
           patientAge: finalAge,
@@ -371,7 +393,7 @@ export const getPharmacyOrder = async (
   try {
     const { id } = req.params;
     let pharmacyOrder = await PharmacyOrder.findById(id)
-      .populate("patient", "name mobile email age gender address")
+      .populate("patient", "name mobile email age gender address honorific ageUnit")
       .populate({
         path: "doctor",
         populate: { path: "user", select: "name" },
@@ -380,7 +402,7 @@ export const getPharmacyOrder = async (
 
     if (!pharmacyOrder && mongoose.Types.ObjectId.isValid(id)) {
       pharmacyOrder = await PharmacyOrder.findOne({ prescription: id })
-        .populate("patient", "name mobile email age gender address")
+        .populate("patient", "name mobile email age gender address honorific ageUnit")
         .populate({
           path: "doctor",
           populate: { path: "user", select: "name" },
@@ -392,17 +414,21 @@ export const getPharmacyOrder = async (
       return res.status(404).json({ message: "Pharmacy order not found" });
     }
 
-    // Fetch patient profile for MRN and Address
+    // Fetch patient profile for MRN, Address, Honorific and AgeUnit
     let mrn = "";
     let profileAddress = "";
+    let profileHonorific = "";
+    let profileAgeUnit = "";
     if (pharmacyOrder.patient) {
-      const patientProfile = await mongoose.model("PatientProfile").findOne({
+      const patientProfile: any = await mongoose.model("PatientProfile").findOne({
         user: (pharmacyOrder.patient as any)._id,
         hospital: pharmacyOrder.hospital
-      }).select("mrn address");
+      }).select("mrn address honorific ageUnit").lean();
       if (patientProfile) {
         mrn = patientProfile.mrn || "";
         profileAddress = patientProfile.address || "";
+        profileHonorific = patientProfile.honorific || "";
+        profileAgeUnit = patientProfile.ageUnit || "";
       }
     }
 
@@ -410,8 +436,14 @@ export const getPharmacyOrder = async (
     let enrichedOrder: any = pharmacyOrder.toObject();
     enrichedOrder.mrn = mrn;
     enrichedOrder.patientType = pharmacyOrder.admission ? "IPD" : "OPD";
+    const resolvedHonorific = (enrichedOrder.patient as any)?.honorific || profileHonorific || "";
+    const resolvedAgeUnit = (enrichedOrder.patient as any)?.ageUnit || profileAgeUnit || "";
+    enrichedOrder.honorific = resolvedHonorific;
+    enrichedOrder.patientAgeUnit = resolvedAgeUnit;
     if (enrichedOrder.patient) {
       enrichedOrder.patient.address = enrichedOrder.patient.address || profileAddress || "Address not provided";
+      enrichedOrder.patient.honorific = resolvedHonorific;
+      enrichedOrder.patient.ageUnit = resolvedAgeUnit;
     }
 
     // Enrich medicines with up-to-date prices from inventory

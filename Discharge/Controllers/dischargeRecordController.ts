@@ -5,6 +5,7 @@ import dischargeService from "../../services/discharge.service.js";
 import User from "../../Auth/Models/User.js";
 import { createNotification } from "../../Notification/Controllers/notificationController.js";
 import PendingDischarge from "../Models/PendingDischarge.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 
 // Helper function to send discharge notifications
 const sendDischargeNotifications = async (req: any, dischargeData: any) => {
@@ -509,15 +510,20 @@ export const dischargeRecordController = {
       const pendingDischarges = await (PendingDischarge.find(query) as any)
         .unscoped()
         .select(
-          "patientName mrn ipNo admissionId primaryDoctor department status updatedAt createdAt bedNo roomType",
+          "patientName patientTitle honorific mrn ipNo admissionId primaryDoctor department status updatedAt createdAt bedNo roomType",
         )
         .sort({ updatedAt: -1 })
         .lean();
 
+      const enriched = pendingDischarges.map((pd: any) => ({
+        ...pd,
+        patientName: formatPatientDisplayName(pd.patientName, pd.honorific || pd.patientTitle) || pd.patientName,
+      }));
+
       res.status(200).json({
         success: true,
-        data: pendingDischarges,
-        count: pendingDischarges.length,
+        data: enriched,
+        count: enriched.length,
       });
     } catch (error: any) {
       console.error("[getPendingDischarges] Error:", error);
@@ -586,6 +592,7 @@ export const dischargeRecordController = {
       // Map hospital details from either snapshot or populated field
       const mappedRecords = records.map((record: any) => ({
         ...record,
+        patientName: formatPatientDisplayName(record.patientName, record.patientTitle || record.honorific) || record.patientName,
         hospitalName: record.hospitalName || record.hospital?.name,
         hospitalAddress: record.hospitalAddress || record.hospital?.address,
         hospitalLogo: record.hospitalLogo || record.hospital?.logo,

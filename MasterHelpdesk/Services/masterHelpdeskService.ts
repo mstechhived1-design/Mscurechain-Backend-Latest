@@ -14,6 +14,7 @@ import { generateTransactionId, generateReceiptNumber, generateMrn } from "../..
 import { createNotification } from "../../Notification/Controllers/notificationController.js";
 import { Server } from "socket.io";
 import User from "../../Auth/Models/User.js";
+import { sendPatientWelcomeWhatsApp } from "../../WhatsApp/Services/patientWelcomeService.js";
 
 const calculateAgeFromDob = (dob: any) => {
   if (!dob) return "N/A";
@@ -1145,6 +1146,22 @@ class MasterHelpdeskService {
 
       await session.commitTransaction();
 
+      // ── TRIGGER WHATSAPP WELCOME MESSAGE ──────────────────────────────────
+      let whatsappStatus: any = { success: false, error: "Not initiated" };
+      try {
+        whatsappStatus = await sendPatientWelcomeWhatsApp({
+          hospitalId,
+          patientName: user.name || name,
+          mrn: patientProfile?.mrn || user._id.toString(),
+          mobile: user.mobile || mobile,
+          gender: user.gender || gender,
+          age: user.age || age || patientProfile?.age,
+          registrationDate: patientProfile?.createdAt || new Date(),
+        });
+      } catch (e: any) {
+        whatsappStatus = { success: false, error: e?.message || "WhatsApp send failed" };
+      }
+
       // ── TRIGGER NOTIFICATIONS FOR CONFIRMED/PAID APPOINTMENTS ───────────────
       if (appointment && (paymentStatus?.toLowerCase() === 'paid' || paymentStatus?.toLowerCase() === 'not_required' || !paymentStatus)) {
           try {
@@ -1234,6 +1251,7 @@ class MasterHelpdeskService {
           mobile: user.mobile,
           hospitals: user.hospitals || (user.hospital ? [user.hospital] : []),
         },
+        whatsapp: whatsappStatus,
         visitId: appointment?._id || null,
         appointmentId: appointment?.appointmentId || null,
         credentials: {

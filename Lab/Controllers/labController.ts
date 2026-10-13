@@ -20,12 +20,15 @@ import IPDAdmission from "../../IPD/Models/IPDAdmission.js";
 import IPDExtraCharge from "../../IPD/Models/IPDExtraCharge.js";
 import Patient from "../../Patient/Models/Patient.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
+import Appointment from "../../Appointment/Models/Appointment.js";
 import Hospital from "../../Hospital/Models/Hospital.js";
 import { AuthRequest } from "../../Auth/types/index.js";
 import labService from "../../services/lab.service.js";
 import redisService from "../../config/redis.js";
 import BedOccupancy from "../../IPD/Models/BedOccupancy.js";
 import Bed from "../../IPD/Models/Bed.js";
+import { generateMrn } from "../../utils/idGenerator.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 
 // 1. Create Order (Step 2: Patient comes to Lab)
 export const createLabOrder = async (req: Request, res: Response) => {
@@ -228,18 +231,23 @@ export const createLabOrder = async (req: Request, res: Response) => {
 
       // Ensure PatientProfile exists for this hospital context
       if (resolvedPatientId && currentHospital) {
-        const existingProfile = await PatientProfile.findOne({
+        let existingProfile = await PatientProfile.findOne({
           user: resolvedPatientId,
           hospital: currentHospital,
         });
         if (!existingProfile) {
+          const generatedMrn = await generateMrn(currentHospital);
           await PatientProfile.create({
             user: resolvedPatientId,
             hospital: currentHospital,
+            mrn: generatedMrn,
             gender: (patientDetails?.gender && ["male", "female", "other"].includes(patientDetails.gender.toLowerCase()))
               ? patientDetails.gender.toLowerCase()
               : undefined,
           });
+        } else if (!existingProfile.mrn) {
+          existingProfile.mrn = await generateMrn(currentHospital);
+          await existingProfile.save();
         }
       }
 
@@ -1355,11 +1363,11 @@ export const getAllInvoices = async (req: Request, res: Response) => {
 
     const [invoices, total] = await Promise.all([
       Transaction.find(query)
-        .populate("user", "name mobile age gender ageUnit") // Explicitly select fields
+        .populate("user", "name mobile age gender ageUnit honorific") // Explicitly select fields
         .populate({
           path: "referenceId", // LabOrder
           model: "LabOrder",
-          select: "tests totalAmount status patient doctor", // also select doctor for refDoctor
+          select: "tests totalAmount status patient doctor honorific ageUnit", // also select doctor for refDoctor
           populate: [
             {
               path: "tests.test",
@@ -1368,7 +1376,7 @@ export const getAllInvoices = async (req: Request, res: Response) => {
             },
             {
               path: "patient", // Populate patient from order as fallback
-              select: "name mobile age gender ageUnit",
+              select: "name mobile age gender ageUnit honorific",
             },
             {
               path: "doctor", // Populate doctor for Ref. Doctor field
@@ -1383,9 +1391,85 @@ export const getAllInvoices = async (req: Request, res: Response) => {
       Transaction.countDocuments(query),
     ]);
 
+    // Resolve MRNs & Honorifics from PatientProfile and Appointment
+    const userIds = invoices
+      .map((inv: any) => inv.user?._id || (inv.referenceId as any)?.patient?._id)
+      .filter(Boolean);
+    const mobiles = invoices
+      .map((inv: any) => (inv.user?.mobile || (inv.referenceId as any)?.patient?.mobile || (inv as any).mobile || "").replace(/[^0-9]/g, "").slice(-10))
+      .filter((m: string) => m.length === 10);
+
+    const [profilesById, usersByMobile, apptsByUser] = await Promise.all([
+      userIds.length > 0
+        ? (PatientProfile.find({
+            user: { $in: userIds },
+          }) as any).unscoped().select("user hospital mrn honorific ageUnit").lean()
+        : [],
+      mobiles.length > 0
+        ? Patient.find({
+            $or: [
+              { mobile: { $in: mobiles } },
+              { mobile: { $in: mobiles.map((m: string) => "91" + m) } },
+              { mobile: { $in: mobiles.map((m: string) => "+91" + m) } }
+            ]
+          }).select("_id mobile honorific ageUnit").lean()
+        : [],
+      userIds.length > 0
+        ? Appointment.find({
+            patient: { $in: userIds }
+          }).sort({ createdAt: -1 }).select("patient patientDetails honorific").lean()
+        : []
+    ]);
+
+    const mobileUserIds = usersByMobile.map((u: any) => u._id);
+    const profilesByMobile = mobileUserIds.length > 0
+      ? await (PatientProfile.find({
+          user: { $in: mobileUserIds },
+          mrn: { $exists: true, $ne: null }
+        }) as any).unscoped().select("user hospital mrn").lean()
+      : [];
+
+    const rawHospIdStr = hospitalId ? hospitalId.toString() : "";
+    const userToMrnMap = new Map<string, string>();
+    const mobileToMrnMap = new Map<string, string>();
+
+    const allProfiles = [...profilesById, ...profilesByMobile];
+    allProfiles.sort((a: any, b: any) => {
+      const aMatch = a.hospital?.toString() === rawHospIdStr ? 1 : 0;
+      const bMatch = b.hospital?.toString() === rawHospIdStr ? 1 : 0;
+      return bMatch - aMatch;
+    });
+
+    for (const p of allProfiles) {
+      if (p.user && p.mrn && !userToMrnMap.has(p.user.toString())) {
+        userToMrnMap.set(p.user.toString(), p.mrn);
+      }
+    }
+
+    for (const u of usersByMobile) {
+      const cleanM = (u.mobile || "").replace(/[^0-9]/g, "").slice(-10);
+      const mrn = userToMrnMap.get(u._id.toString());
+      if (cleanM && mrn && !mobileToMrnMap.has(cleanM)) {
+        mobileToMrnMap.set(cleanM, mrn);
+      }
+    }
+
+    const isMongoId = (val?: string) => typeof val === "string" && /^[0-9a-fA-F]{24}$/.test(val);
+    const validMrn = (val?: any) => (val && typeof val === "string" && !isMongoId(val)) ? val : null;
+
     const mappedBills = invoices.map((inv: any) => {
       // Resolve User/Patient details from Transaction User OR Order Patient
       const userObj = inv.user || (inv.referenceId as any)?.patient || {};
+      const patientUserId = userObj._id?.toString();
+      const cleanPatientMobile = (userObj.mobile || (inv as any).mobile || "").replace(/[^0-9]/g, "").slice(-10);
+
+      const resolvedMrn =
+        (patientUserId ? userToMrnMap.get(patientUserId) : null) ||
+        (cleanPatientMobile ? mobileToMrnMap.get(cleanPatientMobile) : null) ||
+        validMrn((inv as any).mrn) ||
+        validMrn((inv.referenceId as any)?.mrn) ||
+        validMrn((inv.referenceId as any)?.patientDetails?.mrn) ||
+        "N/A";
 
       const items =
         inv.referenceId?.tests?.map((t: any) => ({
@@ -1398,19 +1482,42 @@ export const getAllInvoices = async (req: Request, res: Response) => {
         ? userObj.gender.charAt(0).toUpperCase() + userObj.gender.slice(1)
         : "N/A";
 
+      const apptObj = (apptsByUser as any[]).find((a: any) => a.patient?.toString() === patientUserId);
+      const profObj = (profilesById as any[]).find((p: any) => p.user?.toString() === patientUserId);
+      const userHonorific =
+        userObj.honorific ||
+        (inv as any).honorific ||
+        (inv.referenceId as any)?.honorific ||
+        (inv.referenceId as any)?.patientDetails?.honorific ||
+        (apptObj?.patientDetails as any)?.honorific ||
+        apptObj?.honorific ||
+        profObj?.honorific ||
+        "";
+      const userAgeUnit =
+        userObj.ageUnit ||
+        (inv as any).ageUnit ||
+        (inv.referenceId as any)?.ageUnit ||
+        (inv.referenceId as any)?.patientDetails?.ageUnit ||
+        (apptObj?.patientDetails as any)?.ageUnit ||
+        profObj?.ageUnit ||
+        "Years";
+
       return {
         _id: inv._id,
         invoiceId: inv.invoiceNumber || `LAB-${inv._id.toString().slice(-6).toUpperCase()}`,
         patientType: inv.patientType || "opd",
+        mrn: resolvedMrn,
         patientDetails: {
           name: userObj.name || "Walk-in",
           mobile: userObj.mobile || "N/A",
+          mrn: resolvedMrn,
           age:
             userObj.age !== undefined && userObj.age !== null
               ? userObj.age
               : "N/A",
           gender: pGender,
-          ageUnit: userObj.ageUnit || "Years",
+          ageUnit: userAgeUnit,
+          honorific: userHonorific,
           refDoctor: inv.patientType === "lab"
             ? (inv.refDoctor || "")
             : ((inv.referenceId as any)?.doctor?.name || (inv.referenceId as any)?.doctor || ""),
@@ -1892,27 +1999,63 @@ export const mapOrderToSample = (o: any) => {
   };
 
   // Determine patient details
+  const resolvedHonorific =
+    o.walkInPatient?.honorific ||
+    (o.walkInPatient as any)?.honorificTitle ||
+    o.patientDetails?.honorific ||
+    (o as any).honorific ||
+    (o.appointment as any)?.patientDetails?.honorific ||
+    (o.appointment as any)?.honorific ||
+    o.patient?.honorific ||
+    o.patientProfile?.honorific ||
+    (o.patient as any)?.patientProfile?.honorific ||
+    (o.invoiceId as any)?.honorific ||
+    (o.invoiceId as any)?.patientHonorific ||
+    "";
+
+  const resolvedAgeUnit =
+    o.walkInPatient?.ageUnit ||
+    o.patientDetails?.ageUnit ||
+    (o as any).ageUnit ||
+    (o.appointment as any)?.patientDetails?.ageUnit ||
+    o.patient?.ageUnit ||
+    o.patientProfile?.ageUnit ||
+    "Years";
+
+  const rawPatientName = o.walkInPatient
+    ? o.walkInPatient.name
+    : (o.patient?.name || o.patientDetails?.name || "Walk-in Patient");
+
+  const formattedPatientName = formatPatientDisplayName(rawPatientName, resolvedHonorific);
+
   const patientDetails = o.walkInPatient
     ? {
-        name: o.walkInPatient.name,
+        name: formattedPatientName,
+        rawName: o.walkInPatient.name,
         age: o.walkInPatient.age,
         gender: o.walkInPatient.gender,
         mobile: o.walkInPatient.mobile,
         refDoctor: resolvedDoctorName || "Self",
         patientId: o.walkInPatient._id,
         mrn: resolveMrn(null, null, o.walkInPatient),
+        honorific: resolvedHonorific,
+        ageUnit: resolvedAgeUnit,
       }
     : {
-        name: o.patient?.name || "Walk-in Patient",
+        name: formattedPatientName,
+        rawName: o.patient?.name || o.patientDetails?.name || "Walk-in Patient",
         age:
+          o.patientDetails?.age ||
           o.patient?.age ||
           (o.patientProfile?.dob ? calculateAge(o.patientProfile.dob) : 0),
-        gender: o.patient?.gender || o.patientProfile?.gender || "Other",
-        mobile: o.patient?.mobile || "N/A",
+        gender: o.patientDetails?.gender || o.patient?.gender || o.patientProfile?.gender || "Other",
+        mobile: o.patientDetails?.mobile || o.patient?.mobile || "N/A",
         refDoctor: resolvedDoctorName || "",
         patientId: o.patient?._id,
         mrn: resolveMrn(o.patient, o.patientProfile, o),
-        bedInfo: bedInfo // Injected bed info
+        bedInfo: bedInfo, // Injected bed info
+        honorific: resolvedHonorific,
+        ageUnit: resolvedAgeUnit,
       };
 
   // Determine status mapping
@@ -1978,7 +2121,7 @@ export const mapOrderToSample = (o: any) => {
 
 export const getInternalOrders = async (req: Request, res: Response) => {
   try {
-    const { status, page = 1, limit = 10, isEdited } = req.query;
+    const { status, page = 1, limit = 10, isEdited, countOnly } = req.query;
     const hospitalId = (req as any).user?.hospital;
 
     let internalQuery: any = {};
@@ -2005,6 +2148,21 @@ export const getInternalOrders = async (req: Request, res: Response) => {
         internalQuery.status = "completed";
         directQuery.status = "completed";
       }
+    }
+
+    // High performance count-only query: bypasses full document population and array serialization
+    if (countOnly === "true") {
+      const [countOrders, countWalkIns] = await Promise.all([
+        LabOrder.countDocuments(internalQuery),
+        DirectLabOrder.countDocuments(directQuery),
+      ]);
+      const totalCount = countOrders + countWalkIns;
+      return res.json({
+        success: true,
+        count: totalCount,
+        total: totalCount,
+        data: [],
+      });
     }
 
     const skip = (Number(page) - 1) * Number(limit);
@@ -2043,6 +2201,20 @@ export const getInternalOrders = async (req: Request, res: Response) => {
     const profileMap = new Map();
     profiles.forEach((p) => profileMap.set(p.user.toString(), p));
 
+    // Also fetch recent appointments for these patients to get honorific and ageUnit snapshots
+    const appts = await Appointment.find({
+      patient: { $in: patientIds },
+    })
+      .sort({ createdAt: -1 })
+      .select("patient patientDetails honorific")
+      .lean();
+    const apptMap = new Map();
+    appts.forEach((a: any) => {
+      if (a.patient && !apptMap.has(a.patient.toString())) {
+        apptMap.set(a.patient.toString(), a);
+      }
+    });
+
     // Resolve doctor names for orders where populate didn't work (doctor might be DoctorProfile ID)
     const unresolvedDoctorIds = (orders as any[])
       .filter((o) => o.doctor && !o.doctor.name)
@@ -2062,10 +2234,24 @@ export const getInternalOrders = async (req: Request, res: Response) => {
       });
     }
 
-    // Attach profile and resolved doctor name to orders for mapping
+    // Attach profile, appointment, and resolved doctor name to orders for mapping
     (orders as any[]).forEach((o) => {
       if (o.patient?._id) {
-        o.patientProfile = profileMap.get(o.patient._id.toString());
+        const pIdStr = o.patient._id.toString();
+        o.patientProfile = profileMap.get(pIdStr);
+        const lastAppt = apptMap.get(pIdStr);
+        if (lastAppt) {
+          o.appointment = lastAppt;
+          if (!o.patient.honorific) {
+            o.patient.honorific = lastAppt.patientDetails?.honorific || lastAppt.honorific;
+          }
+          if (!o.patient.ageUnit && lastAppt.patientDetails?.ageUnit) {
+            o.patient.ageUnit = lastAppt.patientDetails.ageUnit;
+          }
+        }
+        if (!o.patient.honorific && o.patientProfile?.honorific) {
+          o.patient.honorific = o.patientProfile.honorific;
+        }
       }
       // If doctor name not resolved via populate, try DoctorProfile fallback
       if (o.doctor && !o.doctor.name) {
@@ -2240,6 +2426,13 @@ export const getLabOrder = async (req: Request, res: Response) => {
       ? await (PatientProfile.findOne({ user: order.patient._id }) as any).unscoped().lean()
       : null;
 
+    const orderAppt = order.patient?._id
+      ? await Appointment.findOne({ patient: order.patient._id })
+          .sort({ createdAt: -1 })
+          .select("patientDetails honorific")
+          .lean()
+      : null;
+
     const resolveMrnVal = (pObj: any, profObj: any, ordObj: any) => {
       const candidates = [profObj?.mrn, pObj?.mrn, ordObj?.mrn, ordObj?.mrnNumber];
       for (const c of candidates) {
@@ -2274,14 +2467,38 @@ export const getLabOrder = async (req: Request, res: Response) => {
       sampleId: order.sampleId || order.orderNumber || order._id.toString().slice(-6).toUpperCase(),
       mrn: resolvedMrnNumber,
       patientDetails: {
-        name: order.patient?.name || "Walk-in Patient",
+        name: formatPatientDisplayName(
+          order.patient?.name || (order.patientDetails as any)?.name || "Walk-in Patient",
+          (order as any).honorific ||
+          (orderAppt as any)?.patientDetails?.honorific ||
+          (orderAppt as any)?.honorific ||
+          order.patient?.honorific ||
+          profile?.honorific ||
+          (order.patientDetails as any)?.honorific ||
+          ""
+        ),
         age:
-          order.patient?.age || (profile?.dob ? calculateAge(profile.dob) : 0),
-        gender: order.patient?.gender || profile?.gender || "Other",
-        mobile: order.patient?.mobile || "N/A",
+          order.patient?.age || (order.patientDetails as any)?.age || (profile?.dob ? calculateAge(profile.dob) : 0),
+        gender: order.patient?.gender || (order.patientDetails as any)?.gender || profile?.gender || "Other",
+        mobile: order.patient?.mobile || (order.patientDetails as any)?.mobile || "N/A",
         refDoctor: resolvedDoctorName || "Self",
         mrn: resolvedMrnNumber,
         patientId: order.patient?._id,
+        honorific:
+          (order as any).honorific ||
+          (orderAppt as any)?.patientDetails?.honorific ||
+          (orderAppt as any)?.honorific ||
+          order.patient?.honorific ||
+          profile?.honorific ||
+          (order.patientDetails as any)?.honorific ||
+          "",
+        ageUnit:
+          (order as any).ageUnit ||
+          (orderAppt as any)?.patientDetails?.ageUnit ||
+          order.patient?.ageUnit ||
+          profile?.ageUnit ||
+          (order.patientDetails as any)?.ageUnit ||
+          "Years",
       },
       doctor: {
         _id: order.doctor?._id || order.doctor,
@@ -2326,6 +2543,57 @@ export const deleteLabOrder = async (req: Request, res: Response) => {
     res.json({ message: "Order deleted successfully" });
   } catch (error) {
     console.error("Delete Lab Order Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const updateLabOrder = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid Order ID" });
+    }
+
+    const { patientDetails, ...otherFields } = req.body;
+    const updateData: any = { ...otherFields };
+    if (patientDetails) {
+      updateData.patientDetails = patientDetails;
+    }
+
+    const order = await LabOrder.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    // Update patient user record if patientDetails is provided and order has a patient
+    if (patientDetails && order.patient) {
+      const patientUpdate: any = {};
+      if (patientDetails.name) patientUpdate.name = patientDetails.name;
+      if (patientDetails.mobile) patientUpdate.mobile = patientDetails.mobile;
+      if (patientDetails.gender) patientUpdate.gender = patientDetails.gender.toLowerCase();
+      if (patientDetails.age) {
+        const parsedAge = Number(patientDetails.age);
+        if (!isNaN(parsedAge)) patientUpdate.age = parsedAge;
+      }
+      if (Object.keys(patientUpdate).length > 0) {
+        await Patient.findByIdAndUpdate(order.patient, { $set: patientUpdate });
+      }
+    }
+
+    if (order.hospital) {
+      const hId = order.hospital.toString();
+      (req as any).io?.to(`hospital_${hId}`).emit("lab_order_updated", { orderId: id });
+      (req as any).io?.to(`hospital_${hId}_lab`).emit("lab_order_updated", { orderId: id });
+    }
+
+    res.json({ success: true, order });
+  } catch (error) {
+    console.error("Update Lab Order Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };

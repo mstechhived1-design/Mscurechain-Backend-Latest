@@ -28,6 +28,7 @@ import Room from "../../IPD/Models/Room.js";
 import Department from "../../IPD/Models/IPDDepartment.js";
 import Payroll from "../../Staff/Models/Payroll.js";
 import Transaction from "../Models/Transaction.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 
 const getRequesterHospitalId = async (req: Request): Promise<string | null> => {
   const requester = (req as any).user;
@@ -2266,69 +2267,94 @@ export const getTransactions = async (req: Request, res: Response) => {
     });
 
     // Format for frontend compatibility
-    const formattedTransactions = result.transactions.map((t: any) => ({
-      id: t._id,
-      _id: t._id,
-      hospitalId: t.hospital,
-      patientName: (() => {
-        const placeholders = [
-          "unknown",
-          "unnamed",
-          "debug",
-          "n/a",
-          "unknown patient",
-          "unnamed patient",
-          "",
-        ];
-        const possibleNames = [
-          t.patientName,
-          t.referenceId?.patientName,
-          t.user?.name,
-          t.patientData?.[0]?.name,
-        ];
-        for (const name of possibleNames) {
-          if (name && !placeholders.includes(name.toLowerCase().trim())) {
-            return name;
-          }
+    const formattedTransactions = result.transactions.map((t: any) => {
+      const placeholders = [
+        "unknown",
+        "unnamed",
+        "debug",
+        "n/a",
+        "unknown patient",
+        "unnamed patient",
+        "",
+      ];
+      const possibleNames = [
+        t.patientName,
+        t.patientDetails?.name,
+        t.referenceId?.patientName,
+        t.referenceId?.patientDetails?.name,
+        t.user?.name,
+        t.patientData?.[0]?.name,
+      ];
+      let rawName = "Unknown Patient";
+      for (const name of possibleNames) {
+        if (name && !placeholders.includes(name.toLowerCase().trim())) {
+          rawName = name;
+          break;
         }
-        return "Unknown Patient";
-      })(),
-      patientMRN: t.user?.mrn || t.patientData?.[0]?.mrn || "N/A",
-      patientMobile: t.user?.mobile || t.referenceId?.phone || t.phone || "N/A",
-      paymentMethod: t.paymentMode || "cash",
-      amount: t.amount || 0,
-      createdAt: t.createdAt || t.date || t.sortDate,
-      date: t.date || t.createdAt,
-      transactionTime: t.createdAt || t.date || t.sortDate,
-      appointmentTime: t.appointmentTime || t.time || t.startTime || t.referenceId?.appointmentTime || t.referenceId?.time,
-      time: t.time || t.appointmentTime || t.startTime || t.referenceId?.time || t.referenceId?.appointmentTime,
-      type: t.type?.toUpperCase() || "GENERAL",
-      source: t.type?.toLowerCase().includes("ipd")
-        ? "IPD"
-        : t.type?.toLowerCase().includes("opd") ||
-          t.type?.toLowerCase().includes("appointment")
-          ? "OPD"
-          : "Other",
-      status:
-        t.status === "completed"
-          ? "Paid"
-          : t.status === "failed"
-            ? "Failed"
-            : "Pending",
-      referenceId: t.referenceId, // Include populated clinical details
-      paymentDetails: t.paymentDetails,
-      transactionId: t.transactionId || t.referenceId?.transactionId || t.referenceId?.admissionId || "—",
-      receiptNumber: t.receiptNumber || t.referenceId?.receiptNumber || t.referenceId?.transactionId || "—",
-      invoiceNumber: t.invoiceNumber,
-      tests: t.tests,
-      reason: t.reason,
-      patientDetails: {
-        honorific: t.user?.honorific || t.profileData?.[0]?.honorific || t.patientData?.[0]?.honorific || t.patientData?.[0]?.honorificTitle || "",
-        age: t.user?.age || t.profileData?.[0]?.age || t.patientData?.[0]?.age,
-        dateOfBirth: t.user?.dob || t.profileData?.[0]?.dob || t.patientData?.[0]?.dob || t.patientData?.[0]?.dateOfBirth,
-        gender: t.user?.gender || t.profileData?.[0]?.gender || t.patientData?.[0]?.gender,
       }
-    }));
+
+      const honorific =
+        t.honorific ||
+        t.patientHonorific ||
+        t.appointmentHonorific ||
+        t.patientDetails?.honorific ||
+        t.referenceId?.patientDetails?.honorific ||
+        t.referenceId?.appointmentHonorific ||
+        t.referenceId?.honorific ||
+        t.profileData?.[0]?.honorific ||
+        t.patientData?.[0]?.honorific ||
+        t.patientData?.[0]?.honorificTitle ||
+        t.user?.honorific ||
+        "";
+
+      const formattedPatientName = formatPatientDisplayName(rawName, honorific);
+
+      return {
+        id: t._id,
+        _id: t._id,
+        hospitalId: t.hospital,
+        patientName: formattedPatientName,
+        patientHonorific: honorific,
+        honorific: honorific,
+        patientMRN: t.user?.mrn || t.patientData?.[0]?.mrn || t.patientDetails?.mrn || "N/A",
+        patientMobile: t.user?.mobile || t.referenceId?.phone || t.patientDetails?.mobile || t.patientDetails?.phone || t.phone || "N/A",
+        paymentMethod: t.paymentMode || "cash",
+        amount: t.amount || 0,
+        createdAt: t.createdAt || t.date || t.sortDate,
+        date: t.date || t.createdAt,
+        transactionTime: t.createdAt || t.date || t.sortDate,
+        appointmentTime: t.appointmentTime || t.time || t.startTime || t.referenceId?.appointmentTime || t.referenceId?.time,
+        time: t.time || t.appointmentTime || t.startTime || t.referenceId?.time || t.referenceId?.appointmentTime,
+        type: t.type?.toUpperCase() || "GENERAL",
+        source: t.type?.toLowerCase().includes("ipd")
+          ? "IPD"
+          : t.type?.toLowerCase().includes("opd") ||
+            t.type?.toLowerCase().includes("appointment")
+            ? "OPD"
+            : "Other",
+        status:
+          t.status === "completed"
+            ? "Paid"
+            : t.status === "failed"
+              ? "Failed"
+              : "Pending",
+        referenceId: t.referenceId, // Include populated clinical details
+        paymentDetails: t.paymentDetails,
+        transactionId: t.transactionId || t.referenceId?.transactionId || t.referenceId?.admissionId || "—",
+        receiptNumber: t.receiptNumber || t.referenceId?.receiptNumber || t.referenceId?.transactionId || "—",
+        invoiceNumber: t.invoiceNumber,
+        tests: t.tests,
+        reason: t.reason,
+        patientDetails: {
+          ...t.patientDetails,
+          honorific: honorific,
+          name: formattedPatientName,
+          age: t.user?.age || t.profileData?.[0]?.age || t.patientData?.[0]?.age || t.patientDetails?.age,
+          dateOfBirth: t.user?.dob || t.profileData?.[0]?.dob || t.patientData?.[0]?.dob || t.patientData?.[0]?.dateOfBirth || t.patientDetails?.dateOfBirth || t.patientDetails?.dob,
+          gender: t.user?.gender || t.profileData?.[0]?.gender || t.patientData?.[0]?.gender || t.patientDetails?.gender,
+        }
+      };
+    });
 
     res.json({
       data: formattedTransactions,

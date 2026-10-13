@@ -31,7 +31,7 @@ export const startConsultation = async (
       .unscoped()
       .populate({
         path: "patient",
-        select: "name mobile email age gender mrn dateOfBirth",
+        select: "name mobile email age ageUnit gender mrn dateOfBirth honorific",
         options: { unscoped: true },
       })
       .populate({
@@ -111,6 +111,7 @@ export const startConsultation = async (
 
     if (profile) {
       patientData.age = appointment.patientDetails?.age || profile.age || patientData.age;
+      patientData.ageUnit = (appointment.patient as any)?.ageUnit || appointment.patientDetails?.ageUnit || (profile as any)?.ageUnit || patientData.ageUnit || "Years";
       patientData.gender = appointment.patientDetails?.gender || profile.gender || patientData.gender;
       patientData.mrn = appointment.mrn || profile.mrn || patientData.mrn || "N/A";
 
@@ -121,7 +122,11 @@ export const startConsultation = async (
       patientData.medicalHistory = profile.medicalHistory;
       patientData.emergencyContact = profile.alternateNumber;
       patientData.contactNumber = profile.contactNumber;
-      patientData.dob = profile.dob;
+      patientData.dob = profile.dob || patientData.dateOfBirth;
+    } else {
+      patientData.ageUnit = (appointment.patient as any)?.ageUnit || appointment.patientDetails?.ageUnit || patientData.ageUnit || "Years";
+      patientData.honorific = (appointment as any).appointmentHonorific || (appointment as any).honorific || appointment.patientDetails?.honorific || patientData.honorific || "";
+      patientData.dob = patientData.dateOfBirth || appointment.patientDetails?.dob;
     }
 
     const rawApptVitals = appointment.vitals
@@ -398,7 +403,7 @@ export const getConsultationSummary = async (
 
     const appointment = await (Appointment.findById(appointmentId) as any)
       .unscoped()
-      .populate("patient", "name mobile email age gender mrn dateOfBirth")
+      .populate("patient", "name mobile email age ageUnit gender mrn dateOfBirth honorific")
       .populate(
         "doctor",
         "name specialization signature medicalRegistrationNumber",
@@ -427,8 +432,9 @@ export const getConsultationSummary = async (
     const patientData: any = JSON.parse(JSON.stringify(appointment.patient));
 
     if (profile) {
-      patientData.age = appointment.patientDetails?.age || profile.age;
-      patientData.gender = appointment.patientDetails?.gender || profile.gender;
+      patientData.age = appointment.patientDetails?.age || profile.age || patientData.age;
+      patientData.ageUnit = (appointment.patient as any)?.ageUnit || appointment.patientDetails?.ageUnit || (profile as any)?.ageUnit || patientData.ageUnit || "Years";
+      patientData.gender = appointment.patientDetails?.gender || profile.gender || patientData.gender;
       patientData.mrn = appointment.mrn || profile.mrn || "N/A";
 
       // Comprehensive Data Mapping
@@ -439,7 +445,11 @@ export const getConsultationSummary = async (
       patientData.medicalHistory = profile.medicalHistory;
       patientData.emergencyContact = profile.alternateNumber;
       patientData.contactNumber = profile.contactNumber;
-      patientData.dob = profile.dob;
+      patientData.dob = profile.dob || patientData.dateOfBirth;
+    } else {
+      patientData.ageUnit = (appointment.patient as any)?.ageUnit || appointment.patientDetails?.ageUnit || patientData.ageUnit || "Years";
+      patientData.honorific = (appointment as any).appointmentHonorific || (appointment as any).honorific || appointment.patientDetails?.honorific || patientData.honorific || "";
+      patientData.dob = patientData.dateOfBirth || appointment.patientDetails?.dob;
     }
 
     // Per-field Merge of Vitals (Appointment > Profile > Empty)

@@ -4,7 +4,9 @@ import multiTenancyPlugin from "../../middleware/tenantPlugin.js";
 export interface IWalkInPatient extends Document {
   registrationId: string;
   name: string;
+  honorific?: string;
   age: number;
+  ageUnit?: string;
   gender: string;
   mobile: string;
   email?: string;
@@ -22,7 +24,9 @@ const walkInPatientSchema = new Schema<IWalkInPatient>(
       unique: true,
     },
     name: { type: String, required: true },
+    honorific: { type: String },
     age: { type: Number, required: true },
+    ageUnit: { type: String, default: "Years" },
     gender: {
       type: String,
       required: true,

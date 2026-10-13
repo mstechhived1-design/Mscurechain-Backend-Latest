@@ -320,7 +320,7 @@ export const getAllReturns = asyncHandler(async (req: Request, res: Response) =>
     if (admissionId) filter.admissionId = admissionId;
 
     const returns = await MedicineReturn.find(filter)
-        .populate("patient", "name mobile")
+        .populate("patient", "name mobile honorific")
         .populate("returnedBy", "name role")
         .populate("approvedBy", "name role")
         .populate("items.issuance", "totalAmount items")
@@ -333,7 +333,7 @@ export const getAllReturns = asyncHandler(async (req: Request, res: Response) =>
 
     const [patientProfiles, admissions] = await Promise.all([
         PatientProfile.find({ user: { $in: userIds as any }, hospital: hospitalId })
-            .select("user mrn")
+            .select("user mrn honorific")
             .lean(),
         IPDAdmission.find({ admissionId: { $in: admissionIds as any }, hospital: hospitalId })
             .select("admissionId primaryDoctor")
@@ -395,6 +395,7 @@ export const getAllReturns = asyncHandler(async (req: Request, res: Response) =>
                 ? {
                     ...ret.patient,
                     mrn: profile?.mrn,
+                    honorific: ret.patient?.honorific || profile?.honorific || "",
                 }
                 : null,
             primaryDoctor,

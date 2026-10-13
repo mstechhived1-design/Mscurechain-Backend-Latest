@@ -23,6 +23,7 @@ import {
   generateMrn,
 } from "../../utils/idGenerator.js";
 import { sanitizePatientName } from "../../utils/sanitizer.js";
+import { sendPatientWelcomeWhatsApp } from "../../WhatsApp/Services/patientWelcomeService.js";
 
 const invalidateIPDCache = async (
   hospitalId: string,
@@ -610,6 +611,24 @@ export const registerPatient = asyncHandler(
         }
       }
       await session.commitTransaction();
+
+      // ── TRIGGER WHATSAPP WELCOME MESSAGE ──────────────────────────────────
+      const welcomeHospitalId = hospitalId || (req as any).hospitalId || (req as any).tenantId || (req.user as any)?.hospital || req.headers["x-hospital-id"];
+      let whatsappStatus: any = { success: false, error: "Not initiated" };
+      try {
+        whatsappStatus = await sendPatientWelcomeWhatsApp({
+          hospitalId: welcomeHospitalId,
+          patientName: user.name,
+          mrn: patientProfile?.mrn,
+          mobile: user.mobile || mobile,
+          gender: user.gender || gender,
+          age: user.age || age || patientProfile?.age,
+          registrationDate: patientProfile?.createdAt || new Date(),
+        });
+      } catch (e: any) {
+        whatsappStatus = { success: false, error: e?.message || "WhatsApp send failed" };
+      }
+
       res.status(201).json({
         message: finalDoctorId
           ? "Patient registered successfully with appointment"
@@ -624,6 +643,7 @@ export const registerPatient = asyncHandler(
             user.hospitals ||
             ((user as any).hospital ? [(user as any).hospital] : []),
         },
+        whatsapp: whatsappStatus,
         visitId: appointment?._id || null,
         appointmentId: appointment?.appointmentId || null,
         credentials: {
