@@ -15,6 +15,13 @@ export interface IWhatsAppConfig extends Document {
     dischargeSummary: string;
     feedbackMessage: string;
   };
+  departmentRouting?: {
+    [key: string]: {
+      enabled: boolean;
+      phoneNumber: string;
+      name?: string;
+    };
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +45,15 @@ const whatsappConfigSchema = new Schema<IWhatsAppConfig>(
       labReportReady: { type: String, default: "" },
       dischargeSummary: { type: String, default: "" },
       feedbackMessage: { type: String, default: "" },
+    },
+    departmentRouting: {
+      type: Schema.Types.Mixed,
+      default: {
+        pharma: { enabled: false, phoneNumber: "", name: "Pharmacy" },
+        lab: { enabled: false, phoneNumber: "", name: "Laboratory" },
+        frontdesk: { enabled: false, phoneNumber: "", name: "Frontdesk" },
+        doctor: { enabled: false, phoneNumber: "", name: "Doctor" },
+      },
     },
   },
   { timestamps: true }
