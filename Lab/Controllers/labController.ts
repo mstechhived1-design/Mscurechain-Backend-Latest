@@ -2174,7 +2174,7 @@ export const mapOrderToSample = (o: any) => {
 
 export const getInternalOrders = async (req: Request, res: Response) => {
   try {
-    const { status, page = 1, limit = 10, isEdited, countOnly } = req.query;
+    const { status, page = 1, limit = 10, isEdited, countOnly, search } = req.query;
     const hospitalId = (req as any).user?.hospital;
 
     let internalQuery: any = {};
@@ -2363,8 +2363,21 @@ export const getInternalOrders = async (req: Request, res: Response) => {
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
 
-    const total = allFetchedOrders.length;
-    const paginatedSlice = allFetchedOrders.slice(skip, skip + Number(limit));
+    let filteredOrders = allFetchedOrders;
+    if (search && typeof search === "string" && search.trim()) {
+      const q = search.trim().toLowerCase();
+      filteredOrders = allFetchedOrders.filter((o: any) => {
+        const pName = (o.patient?.name || o.walkInPatient?.name || "").toLowerCase();
+        const pId = (o.patient?._id || o.walkInPatient?._id || "").toString().toLowerCase();
+        const phone = o.patient?.mobile || o.walkInPatient?.phone || "";
+        const orderNum = (o.orderNumber || "").toLowerCase();
+        const id = (o._id ? o._id.toString() : "").toLowerCase();
+        return pName.includes(q) || phone.includes(q) || orderNum.includes(q) || id.includes(q) || pId.includes(q);
+      });
+    }
+
+    const total = filteredOrders.length;
+    const paginatedSlice = filteredOrders.slice(skip, skip + Number(limit));
     const mappedOrders = paginatedSlice.map(mapOrderToSample);
 
     res.json({
