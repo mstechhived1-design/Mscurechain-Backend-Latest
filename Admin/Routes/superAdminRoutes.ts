@@ -40,6 +40,13 @@ import {
   deleteTestimonial as removeTestimonial
 } from "../Controllers/contentController.js";
 import { getAllAuthLogs, getAuthLogFilters } from "../Controllers/authLogController.js";
+import {
+  getPulseMetrics,
+  getInfrastructureHealth,
+  getWhatsAppMatrix,
+  getHospitalInfrastructure,
+  updateHospitalPermissions,
+} from "../Controllers/telemetryController.js";
 const router = express.Router();
 
 // Middleware: All routes here require super-admin
@@ -57,6 +64,13 @@ router.get("/analytics", getAnalytics);
 router.get("/auth-logs", getAllAuthLogs);
 router.get("/auth-log-filters", getAuthLogFilters);
 router.post("/broadcast", adminBroadcast);
+
+// SaaS Telemetry, Real-time Pulse & External Services Health
+router.get("/realtime/pulse", getPulseMetrics);
+router.get("/realtime/infrastructure", getInfrastructureHealth);
+router.get("/realtime/whatsapp", getWhatsAppMatrix);
+router.get("/hospitals/:id/infrastructure", getHospitalInfrastructure);
+router.patch("/hospitals/:id/permissions", updateHospitalPermissions);
 
 // User Management (Global)
 router.get("/users", getAllUsers);

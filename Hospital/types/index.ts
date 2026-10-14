@@ -71,6 +71,14 @@ export interface IHospital extends Document {
   opdFollowUpDays?: number;
   ipdFollowUpDays?: number;
   enableFollowUpExpiry?: boolean;
+  devicePermissions?: {
+    camera?: boolean;
+    location?: boolean;
+    microphone?: boolean;
+    biometrics?: boolean;
+    hwidLock?: boolean;
+    boundHwid?: string;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
