@@ -66,21 +66,74 @@ export const createLabOrder = async (req: Request, res: Response) => {
         currentHospital = prescription.hospital;
       }
 
-      const testNames = prescription.suggestedTests || [];
-      const labTests = await LabTest.find({
-        $or: [{ testName: { $in: testNames } }, { name: { $in: testNames } }],
-        hospital: currentHospital, // Enforce hospital isolation
-      });
+      const testNames: string[] = prescription.suggestedTests || [];
+      const catalogTests: any[] = await (LabTest.find({
+        hospital: currentHospital,
+        isActive: { $ne: false },
+      }) as any).unscoped();
 
-      const tests = labTests.map((test) => ({
-        test: test._id,
-        testName: test.testName || test.name,
-        status: "pending",
-        cost: Number((test as any).price || (test as any).cost || 0),
-      }));
+      const tests: any[] = [];
+      const usedTestIds = new Set<string>();
 
-      const calcTotal = labTests.reduce((sum, test: any) => {
-        return sum + (test.price || 0);
+      for (const rawTest of testNames) {
+        const term = (rawTest || "").trim().toLowerCase();
+        if (!term) continue;
+
+        let match = catalogTests.find((t: any) =>
+          !usedTestIds.has(t._id.toString()) && (
+            (t.testCode && t.testCode.toLowerCase() === term) ||
+            (t.shortName && t.shortName.toLowerCase() === term)
+          )
+        );
+
+        if (!match) {
+          match = catalogTests.find((t: any) =>
+            !usedTestIds.has(t._id.toString()) && (
+              (t.testName && t.testName.toLowerCase() === term) ||
+              (t.name && t.name.toLowerCase() === term)
+            )
+          );
+        }
+
+        if (!match) {
+          const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const wordRegex = new RegExp(`(^|\\b|\\()${escaped}(\\)|\\b|$)`, "i");
+          match = catalogTests.find((t: any) =>
+            !usedTestIds.has(t._id.toString()) && (
+              (t.testName && wordRegex.test(t.testName)) ||
+              (t.name && wordRegex.test(t.name))
+            )
+          );
+        }
+
+        if (!match) {
+          match = catalogTests.find((t: any) =>
+            !usedTestIds.has(t._id.toString()) && (
+              (t.testName && t.testName.toLowerCase().includes(term)) ||
+              (t.name && t.name.toLowerCase().includes(term))
+            )
+          );
+        }
+
+        if (match) {
+          usedTestIds.add(match._id.toString());
+          tests.push({
+            test: match._id,
+            testName: match.testName || match.name,
+            status: "pending",
+            cost: Number(match.price || 0),
+          });
+        } else {
+          tests.push({
+            testName: rawTest,
+            status: "pending",
+            cost: 0,
+          });
+        }
+      }
+
+      const calcTotal = tests.reduce((sum, test: any) => {
+        return sum + (test.cost || 0);
       }, 0);
 
       let admissionObjectId: any = prescription.admission || null;

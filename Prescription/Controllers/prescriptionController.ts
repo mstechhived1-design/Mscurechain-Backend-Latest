@@ -1136,26 +1136,89 @@ export const createPrescription = async (
       );
 
       // Create Lab Order (Integration for Lab Staff Dashboard)
-      const matchedTests = await LabTest.find({
-        $or: [
-          { testName: { $in: suggestedTests } },
-          { name: { $in: suggestedTests } },
-        ],
-        hospital: hospital, // Enforce hospital isolation
-      }).session(session);
+      // Fetch hospital catalog tests using unscoped to prevent plugin filter collisions
+      const catalogTests: any[] = await (LabTest.find({
+        hospital: hospital,
+        isActive: { $ne: false },
+      }) as any).unscoped().session(session);
 
-      if (matchedTests.length > 0) {
-        const tests = matchedTests.map((test) => ({
-          test: test._id,
-          status: "pending",
-          result: "",
-          remarks: "",
-          isAbnormal: false,
-          subTests: [],
-        }));
+      // Resolve each suggested test to exactly one catalog test (or custom entry)
+      const tests: any[] = [];
+      const usedTestIds = new Set<string>();
 
-        const totalAmount = matchedTests.reduce(
-          (sum, t: any) => sum + (t.price || 0),
+      for (const rawTest of (suggestedTests || [])) {
+        const term = (rawTest || "").trim().toLowerCase();
+        if (!term) continue;
+
+        // 1. Exact match on testCode or shortName (e.g. 'CBC', 'LFT')
+        let match = catalogTests.find((t: any) =>
+          !usedTestIds.has(t._id.toString()) && (
+            (t.testCode && t.testCode.toLowerCase() === term) ||
+            (t.shortName && t.shortName.toLowerCase() === term)
+          )
+        );
+
+        // 2. Exact match on testName or name
+        if (!match) {
+          match = catalogTests.find((t: any) =>
+            !usedTestIds.has(t._id.toString()) && (
+              (t.testName && t.testName.toLowerCase() === term) ||
+              (t.name && t.name.toLowerCase() === term)
+            )
+          );
+        }
+
+        // 3. Match word boundaries, e.g. "Liver Function Test (LFT)" or "Complete Blood Count (CBC)"
+        if (!match) {
+          const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const wordRegex = new RegExp(`(^|\\b|\\()${escaped}(\\)|\\b|$)`, "i");
+          match = catalogTests.find((t: any) =>
+            !usedTestIds.has(t._id.toString()) && (
+              (t.testName && wordRegex.test(t.testName)) ||
+              (t.name && wordRegex.test(t.name))
+            )
+          );
+        }
+
+        // 4. Substring match
+        if (!match) {
+          match = catalogTests.find((t: any) =>
+            !usedTestIds.has(t._id.toString()) && (
+              (t.testName && t.testName.toLowerCase().includes(term)) ||
+              (t.name && t.name.toLowerCase().includes(term))
+            )
+          );
+        }
+
+        if (match) {
+          usedTestIds.add(match._id.toString());
+          tests.push({
+            test: match._id,
+            testName: match.testName || match.name,
+            cost: Number(match.price || 0),
+            status: "pending",
+            result: "",
+            remarks: "",
+            isAbnormal: false,
+            subTests: [],
+          });
+        } else {
+          // If not in catalog, create a pending test entry with the written name
+          tests.push({
+            testName: rawTest,
+            cost: 0,
+            status: "pending",
+            result: "",
+            remarks: "",
+            isAbnormal: false,
+            subTests: [],
+          });
+        }
+      }
+
+      if (tests.length > 0) {
+        const totalAmount = tests.reduce(
+          (sum, t: any) => sum + (t.cost || 0),
           0,
         );
 
@@ -1176,7 +1239,7 @@ export const createPrescription = async (
         });
         await labOrder.save({ session });
         console.log(
-          `[CreatePrescription] Lab Order Created: ${labOrder.tokenNumber}`,
+          `[CreatePrescription] Lab Order Created: ${labOrder.tokenNumber} with ${tests.length} tests`,
         );
 
         // --- IPD Integration: Create Extra Charge for Lab ---

@@ -168,9 +168,23 @@ export function multiTenancyPlugin(
     // 1. HOSPITAL STAFF SCOPING
     if (context.tenantId) {
       if (options.includeGlobal) {
-        this.where({
+        const tenantCondition = {
           $or: [{ [tenantField]: context.tenantId }, { [tenantField]: null }],
-        });
+        };
+        const currentQuery = this.getQuery();
+        if (currentQuery.$or) {
+          const existingOr = currentQuery.$or;
+          delete currentQuery.$or;
+          if (currentQuery.$and) {
+            currentQuery.$and.push({ $or: existingOr }, tenantCondition);
+          } else {
+            currentQuery.$and = [{ $or: existingOr }, tenantCondition];
+          }
+        } else if (currentQuery.$and) {
+          currentQuery.$and.push(tenantCondition);
+        } else {
+          this.where(tenantCondition);
+        }
       } else {
         // Strictly scoped to tenant - OVERWRITE query if it contradicts context
         this.where({ [tenantField]: context.tenantId });
@@ -183,12 +197,26 @@ export function multiTenancyPlugin(
       if (paths.globalPatientId && paths.patient) {
         // Automatically inject patient filter to prevent cross-patient data leaks.
         // Support BOTH legacy 'patient' and new 'globalPatientId' for backwards compatibility.
-        this.where({
+        const patientCondition = {
           $or: [
             { globalPatientId: context.userId },
             { patient: context.userId }
           ]
-        });
+        };
+        const currentQuery = this.getQuery();
+        if (currentQuery.$or) {
+          const existingOr = currentQuery.$or;
+          delete currentQuery.$or;
+          if (currentQuery.$and) {
+            currentQuery.$and.push({ $or: existingOr }, patientCondition);
+          } else {
+            currentQuery.$and = [{ $or: existingOr }, patientCondition];
+          }
+        } else if (currentQuery.$and) {
+          currentQuery.$and.push(patientCondition);
+        } else {
+          this.where(patientCondition);
+        }
       } else {
         const patientField = paths.globalPatientId
           ? "globalPatientId"
