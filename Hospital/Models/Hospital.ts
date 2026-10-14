@@ -32,6 +32,14 @@ const hospitalSchema = new Schema<IHospital>(
       excludedPortals: { type: [String], default: ["hospital-admin", "masterhelpdesk"] },
       restrictedPortals: { type: [String], default: [] }
     },
+    devicePermissions: {
+      camera: { type: Boolean, default: true },
+      location: { type: Boolean, default: true },
+      microphone: { type: Boolean, default: false },
+      biometrics: { type: Boolean, default: false },
+      hwidLock: { type: Boolean, default: false },
+      boundHwid: { type: String, default: "" },
+    },
     phone: String,
     logo: String,
     registrationNumber: String,

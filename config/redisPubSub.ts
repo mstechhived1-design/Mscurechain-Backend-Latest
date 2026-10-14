@@ -233,3 +233,14 @@ export function unregisterSSEClient(client: SSEClient): void {
   }
   maybeUnsubscribeTenant(tenantId);
 }
+
+export function getLiveSSEStats(): { totalClients: number; tenantCounts: Record<string, number> } {
+  let totalClients = 0;
+  const tenantCounts: Record<string, number> = {};
+  tenantClients.forEach((set, tenantId) => {
+    const size = set.size;
+    totalClients += size;
+    tenantCounts[tenantId] = size;
+  });
+  return { totalClients, tenantCounts };
+}

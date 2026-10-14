@@ -89,6 +89,7 @@ import {
 } from "./middleware/advancedGateway.middleware.js";
 import { autoInvalidateCache } from "./middleware/cache.middleware.js";
 import { autoEmitSSE } from "./middleware/sseEmit.middleware.js";
+import { telemetryMiddleware } from "./services/telemetryService.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -392,6 +393,9 @@ app.use((req, res, next) => {
 // ✅ CSRF PROTECTION
 import { validateCsrf } from "./middleware/Auth/csrfMiddleware.js";
 app.use(validateCsrf);
+
+// ✅ SAAS TELEMETRY & REAL-TIME PERFORMANCE MONITOR
+app.use(telemetryMiddleware);
 
 app.use(advancedApiGateway);
 app.use(autoInvalidateCache);

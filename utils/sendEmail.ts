@@ -2,18 +2,20 @@
 import nodemailer from "nodemailer";
 
 const sendEmail = async (to: string, subject: string, html: string): Promise<any> => {
+    const emailUser = (process.env.EMAIL_USER_FINAL || process.env.EMAIL_USER || "").trim();
+    const emailPass = (process.env.EMAIL_PASS_FINAL || process.env.EMAIL_PASS || "").trim();
+
     // Validate required environment variables
-    if (!process.env.EMAIL_USER_FINAL || !process.env.EMAIL_PASS_FINAL) {
-        console.error("Email configuration missing: EMAIL_USER_FINAL and EMAIL_PASS_FINAL required");
+    if (!emailUser || !emailPass) {
+        console.error("Email configuration missing: EMAIL_USER (or EMAIL_USER_FINAL) and EMAIL_PASS required");
         throw new Error("Email service is not configured");
     }
 
     // DIAGNOSTIC LOG (SAFE)
     console.log("--- Email Debug ---");
-    console.log(`User: ${process.env.EMAIL_USER_FINAL.trim() === process.env.EMAIL_USER_FINAL ? "No spaces" : "HAS SPACES!"}`);
-    console.log(`User Length: ${process.env.EMAIL_USER_FINAL.length}`);
-    console.log(`Pass Length: ${process.env.EMAIL_PASS_FINAL.length}`);
-    console.log(`Pass Start/End: ${process.env.EMAIL_PASS_FINAL[0]}...${process.env.EMAIL_PASS_FINAL.slice(-1)}`);
+    console.log(`User: ${emailUser ? "Configured" : "Missing"}`);
+    console.log(`User Length: ${emailUser.length}`);
+    console.log(`Pass Length: ${emailPass.length}`);
     console.log("-------------------");
 
     // Use EMAIL_SERVICE if provided, otherwise default to 'gmail'
@@ -28,15 +30,15 @@ const sendEmail = async (to: string, subject: string, html: string): Promise<any
             port: emailPort,
             secure: emailPort === 465, // true for 465, false for other ports
             auth: {
-                user: process.env.EMAIL_USER_FINAL,
-                pass: process.env.EMAIL_PASS_FINAL,
+                user: emailUser,
+                pass: emailPass,
             },
         }
         : {
             service: emailService,
             auth: {
-                user: process.env.EMAIL_USER_FINAL,
-                pass: process.env.EMAIL_PASS_FINAL,
+                user: emailUser,
+                pass: emailPass,
             },
         };
 
