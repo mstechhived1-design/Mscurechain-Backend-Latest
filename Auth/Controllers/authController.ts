@@ -389,98 +389,117 @@ export const login = async (req: Request, res: Response) => {
       }
 
       // PRIORITY 2: Regular User (Staff, Doctor, Admin, etc.)
-      if (user) {
-        // ... continue to regular user logic ...
-      } else {
-        // PRIORITY 3: Patient
-        const patients = await (Patient.find({ mobile: loginId }) as any).unscoped();
-        if (patients.length > 0) {
-          let authenticatedPatient: any = null;
+      if (user && user.status === "active") {
+        let isAuthorized = false;
+        if (user.password) {
+          isAuthorized = await bcrypt.compare(password, user.password as string);
+        }
 
-          for (const patient of patients) {
-            // Check patient status
-            if (patient.status !== "active") continue;
+        if (isAuthorized) {
+          const finalHosp = (user?.hospital || (user as any)?.hospitals?.[0] || hospitalId).toString();
+          await clearFailedAttempts(loginId, finalHosp, user?._id.toString());
 
-            let patientAuth = false;
-            if (patient.password) {
-              patientAuth = await bcrypt.compare(
-                password,
-                patient.password as string,
-              );
-            }
+          const { accessToken, refreshToken, csrfToken } = await handleAuthResponse(res, user, req, hospitalId);
 
-            if (!patientAuth) {
-              // Try DOB fallback (DDMMYYYY)
-              const profile = await (PatientProfile.findOne({
-                user: patient._id,
-              }) as any).unscoped();
-              if (profile && profile.dob) {
-                const dob = new Date(profile.dob);
-                const d = String(dob.getUTCDate()).padStart(2, "0");
-                const m = String(dob.getUTCMonth() + 1).padStart(2, "0");
-                const y = dob.getUTCFullYear();
-                const expectedDobPassword = `${d}${m}${y}`;
-                if (
-                  password.length === expectedDobPassword.length &&
-                  crypto.timingSafeEqual(
-                    Buffer.from(password),
-                    Buffer.from(expectedDobPassword),
-                  )
-                ) {
-                  patientAuth = true;
-                }
+          return res.json({
+            accessToken,
+            refreshToken,
+            csrfToken,
+            tokens: { accessToken, refreshToken, csrfToken },
+            accessTokenExpiresIn: tokenService.getAccessExpirySeconds(),
+            refreshTokenExpiresIn: tokenService.getRefreshExpirySeconds(),
+            user: {
+              id: (user._id || (user as any).id).toString(),
+              name: user.name,
+              role: user.role,
+              hospitals: (user as any).hospitals || (user.hospital ? [user.hospital] : []),
+              hospital: user.hospital,
+            },
+          });
+        }
+      }
+
+      // PRIORITY 3: Patient (Handles multiple family members sharing the same mobile number)
+      const patients = await (Patient.find({ mobile: loginId }) as any).unscoped();
+      if (patients && patients.length > 0) {
+        let authenticatedPatient: any = null;
+
+        for (const patient of patients) {
+          if (patient.status !== "active") continue;
+
+          let patientAuth = false;
+          // 1. Check patient password hash
+          if (patient.password) {
+            patientAuth = await bcrypt.compare(
+              password,
+              patient.password as string,
+            );
+          }
+
+          // 2. Check DOB match (DDMMYYYY) against PatientProfile
+          if (!patientAuth) {
+            const profile = await (PatientProfile.findOne({
+              user: patient._id,
+            }) as any).unscoped();
+
+            if (profile && profile.dob) {
+              const dob = new Date(profile.dob);
+              // UTC format
+              const dUtc = String(dob.getUTCDate()).padStart(2, "0");
+              const mUtc = String(dob.getUTCMonth() + 1).padStart(2, "0");
+              const yUtc = dob.getUTCFullYear();
+              const expectedDobUtc = `${dUtc}${mUtc}${yUtc}`;
+
+              // Local format
+              const dLoc = String(dob.getDate()).padStart(2, "0");
+              const mLoc = String(dob.getMonth() + 1).padStart(2, "0");
+              const yLoc = dob.getFullYear();
+              const expectedDobLoc = `${dLoc}${mLoc}${yLoc}`;
+
+              if (password === expectedDobUtc || password === expectedDobLoc) {
+                patientAuth = true;
               }
-            }
-
-            if (patientAuth) {
-              authenticatedPatient = patient;
-              break;
             }
           }
 
-          if (authenticatedPatient) {
-            const patientHosp = (authenticatedPatient.hospital || authenticatedPatient.hospitals?.[0] || hospitalId).toString();
-            await clearFailedAttempts(loginId, patientHosp, authenticatedPatient._id.toString());
-            const { accessToken, refreshToken, csrfToken } = await handleAuthResponse(res, authenticatedPatient, req, patientHosp);
-            return res.json({
-              tokens: { accessToken, refreshToken, csrfToken },
-              user: {
-                id: authenticatedPatient._id.toString(),
-                name: authenticatedPatient.name,
-                role: "patient",
-                hospitals: authenticatedPatient.hospitals,
-              },
-            });
+          if (patientAuth) {
+            authenticatedPatient = patient;
+            break;
           }
         }
 
-        // If neither user nor patient nor superadmin (verified above) exists
-        console.log(`[Auth] User NOT found for: '${loginId}'`);
-        await recordFailedAttempt(loginId, hospitalId);
-        return res.status(401).json({ message: "Invalid credentials" });
+        if (authenticatedPatient) {
+          const patientHosp = (authenticatedPatient.hospital || authenticatedPatient.hospitals?.[0] || hospitalId).toString();
+          await clearFailedAttempts(loginId, patientHosp, authenticatedPatient._id.toString());
+          const { accessToken, refreshToken, csrfToken } = await handleAuthResponse(res, authenticatedPatient, req, patientHosp);
+          return res.json({
+            accessToken,
+            refreshToken,
+            csrfToken,
+            tokens: { accessToken, refreshToken, csrfToken },
+            accessTokenExpiresIn: tokenService.getAccessExpirySeconds(),
+            refreshTokenExpiresIn: tokenService.getRefreshExpirySeconds(),
+            user: {
+              id: authenticatedPatient._id.toString(),
+              name: authenticatedPatient.name,
+              role: "patient",
+              hospitals: authenticatedPatient.hospitals,
+            },
+          });
+        }
       }
-    }
 
-    // Check user status before password validation
-    if (user!.status !== "active") {
-      return res.status(403).json({
-        message:
-          "Account is suspended or inactive. Contact your hospital administrator.",
-      });
-    }
-
-    let isAuthorized = false;
-    if (user.password) {
-      const match = await bcrypt.compare(password, user.password as string);
-      if (match) {
-        isAuthorized = true;
+      // Check if user existed but was suspended
+      if (user && user.status !== "active") {
+        return res.status(403).json({
+          message:
+            "Account is suspended or inactive. Contact your hospital administrator.",
+        });
       }
-    }
 
-    if (!isAuthorized) {
-      // Use user ID for locking if we found one
+      // Authentication failed for all (SuperAdmin, Staff/User, Patient)
       const resolvedHosp = (user?.hospital || (user as any)?.hospitals?.[0] || hospitalId).toString();
-      const { attempts, locked, lockDuration } = await recordFailedAttempt(loginId, resolvedHosp, user?._id.toString());
+      const { attempts, locked, lockDuration } = await recordFailedAttempt(loginId, resolvedHosp, user?._id?.toString());
       if (locked) {
         const timeStr = lockDuration < 60 ? `${lockDuration} second(s)` : `${Math.ceil(lockDuration / 60)} minute(s)`;
         return res.status(429).json({
@@ -490,28 +509,6 @@ export const login = async (req: Request, res: Response) => {
       }
       return res.status(401).json({ message: "Invalid credentials" });
     }
-
-    const finalHosp = (user?.hospital || (user as any)?.hospitals?.[0] || hospitalId).toString();
-    await clearFailedAttempts(loginId, finalHosp, user?._id.toString());
-
-    const { accessToken, refreshToken, csrfToken } = await handleAuthResponse(res, user, req, hospitalId);
-
-    return res.json({
-      // ✅ FIX (Bug 5): Top-level fields for AuthResponse type + nested for legacy
-      accessToken,
-      refreshToken,
-      csrfToken,
-      tokens: { accessToken, refreshToken, csrfToken },
-      accessTokenExpiresIn: tokenService.getAccessExpirySeconds(),
-      refreshTokenExpiresIn: tokenService.getRefreshExpirySeconds(),
-      user: {
-        id: (user._id || (user as any).id).toString(),
-        name: user.name,
-        role: user.role,
-        hospitals: (user as any).hospitals || (user.hospital ? [user.hospital] : []),
-        hospital: user.hospital,
-      },
-    });
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ message: "Server error" });
