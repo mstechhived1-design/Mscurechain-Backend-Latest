@@ -7,6 +7,7 @@ import {
   verifyPublicOtp,
   bookPublicAppointment,
   getPublicAppointmentPass,
+  getPublicHospitalStats,
 } from "../Controllers/publicAppointmentController.js";
 
 const router = express.Router();
@@ -31,5 +32,8 @@ router.post("/book", bookPublicAppointment);
 
 // 7. Responsive Digital Appointment Pass Data
 router.get("/pass/:passId", getPublicAppointmentPass);
+
+// 8. Live Hospital Stats (Patient Count & IVF Deliveries by Symptoms)
+router.get("/stats/:hospitalId", getPublicHospitalStats);
 
 export default router;
