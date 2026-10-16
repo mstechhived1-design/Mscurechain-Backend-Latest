@@ -37,37 +37,39 @@ app.get('/api/health', (req: Request, res: Response) =>
 );
 
 // CORS configuration - update with your frontend URL
-const allowedOrigins: (string | undefined | null)[] = [
+const parseOrigins = (raw?: string): string[] => {
+    if (!raw) return [];
+    return raw
+        .split(',')
+        .map((url) => {
+            let origin = url.trim();
+            if (origin && !/^https?:\/\//i.test(origin)) {
+                origin = `https://${origin}`;
+            }
+            return origin.replace(/\/+$/, "");
+        })
+        .filter(Boolean);
+};
+
+const allowedOrigins: string[] = Array.from(new Set([
     'http://localhost:5173',
     'http://localhost:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'https://dhruva-hospital.vercel.app',
     'https://www.mscurechain.com',
-    'https://mscurechain.com', // Support both www and non-www
-    process.env.FRONTEND_URL,
-    // Support multiple frontend URLs (comma-separated)
-    ...(process.env.FRONTEND_URL
-        ? process.env.FRONTEND_URL.split(',').map((url) => {
-              let origin = url.trim();
-              if (origin && !/^https?:\/\//i.test(origin)) {
-                  origin = `https://${origin}`;
-              }
-              return origin.replace(/\/+$/, "");
-          })
-        : []),
-    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
-].filter(Boolean);
+    'https://mscurechain.com',
+    'https://hms-frontend-green.vercel.app',
+    ...parseOrigins(process.env.FRONTEND_URL),
+    ...parseOrigins(process.env.ALLOWED_ORIGINS),
+    ...(process.env.VERCEL_URL ? [`https://${process.env.VERCEL_URL}`] : []),
+]));
 
 app.use(
     cors({
         origin: function (origin, callback) {
             // Allow requests with no origin (like mobile apps or curl requests)
             if (!origin) {
-                // In production, be more strict - only allow if explicitly configured
-                if (
-                    process.env.NODE_ENV === 'production' &&
-                    !process.env.ALLOW_NO_ORIGIN
-                ) {
-                    return callback(new Error('Not allowed by CORS'));
-                }
                 return callback(null, true);
             }
 
@@ -76,17 +78,38 @@ app.use(
                 return callback(null, true);
             }
 
+            try {
+                const url = new URL(origin);
+                const hostname = url.hostname;
+                if (
+                    hostname.endsWith(".vercel.app") ||
+                    hostname === "mscurechain.com" ||
+                    hostname.endsWith(".mscurechain.com") ||
+                    hostname === "railway.app" ||
+                    hostname.endsWith(".railway.app") ||
+                    hostname === "localhost" ||
+                    hostname === "127.0.0.1" ||
+                    hostname === "[::1]" ||
+                    hostname.startsWith("192.168.") ||
+                    hostname.startsWith("10.") ||
+                    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+                ) {
+                    return callback(null, true);
+                }
+            } catch {
+                // invalid url
+            }
+
             // In development, allow all origins
             if (process.env.NODE_ENV === 'development') {
                 return callback(null, true);
             }
 
-            // In production, reject unknown origins
             callback(new Error(`Not allowed by CORS: ${origin}`));
         },
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With', 'Accept', 'hospital-id', 'x-tenant-id'],
     }),
 );
 

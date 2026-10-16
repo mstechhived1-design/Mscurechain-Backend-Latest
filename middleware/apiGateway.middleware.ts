@@ -177,34 +177,80 @@ export const corsHandler = (
   res: Response,
   next: NextFunction,
 ) => {
+  const parseOrigins = (raw?: string): string[] => {
+    if (!raw) return [];
+    return raw
+      .split(",")
+      .map((url) => {
+        let origin = url.trim();
+        if (origin && !/^https?:\/\//i.test(origin)) {
+          origin = `https://${origin}`;
+        }
+        return origin.replace(/\/+$/, "");
+      })
+      .filter(Boolean);
+  };
+
   const allowedOrigins = [
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:3002",
     "http://localhost:3003",
-    ...(process.env.FRONTEND_URL
-        ? process.env.FRONTEND_URL.split(',').map((url) => {
-              let origin = url.trim();
-              if (origin && !/^https?:\/\//i.test(origin)) {
-                  origin = `https://${origin}`;
-              }
-              return origin.replace(/\/+$/, "");
-          })
-        : []),
-  ].filter(Boolean);
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://[::1]:3000",
+    "https://dhruva-hospital.vercel.app",
+    "https://www.mscurechain.com",
+    "https://mscurechain.com",
+    "https://hms-frontend-green.vercel.app",
+    ...parseOrigins(process.env.FRONTEND_URL),
+    ...parseOrigins(process.env.ALLOWED_ORIGINS),
+  ];
 
   const origin = req.headers.origin;
+  const path = req.originalUrl || req.url || "";
+  const isPublicRoute = path.startsWith("/api/public") || path.includes("/public/");
 
-  if (origin && allowedOrigins.includes(origin)) {
+  let isAllowed = false;
+  if (origin) {
+    if (allowedOrigins.includes(origin) || isPublicRoute) {
+      isAllowed = true;
+    } else {
+      try {
+        const url = new URL(origin);
+        const hostname = url.hostname;
+        if (
+          hostname.endsWith(".vercel.app") ||
+          hostname === "mscurechain.com" ||
+          hostname.endsWith(".mscurechain.com") ||
+          hostname === "railway.app" ||
+          hostname.endsWith(".railway.app") ||
+          hostname === "localhost" ||
+          hostname === "127.0.0.1" ||
+          hostname === "[::1]" ||
+          hostname.startsWith("192.168.") ||
+          hostname.startsWith("10.") ||
+          /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+        ) {
+          isAllowed = true;
+        }
+      } catch {
+        // invalid URL
+      }
+    }
+  }
+
+  if (origin && isAllowed) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader(
       "Access-Control-Allow-Methods",
-      "GET, POST, PUT, DELETE, OPTIONS",
+      "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     );
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, Authorization",
+      "Content-Type, Authorization, X-CSRF-Token, X-Requested-With, Accept, hospital-id, x-tenant-id, x-hospital-id, Origin",
     );
   }
 
