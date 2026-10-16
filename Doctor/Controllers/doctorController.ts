@@ -152,11 +152,11 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
         Appointment.find({
           doctor: doctorProfile._id,
           // ✅ CRITICAL FIX: Include ALL active/booked statuses.
-          // "Booked" is the default status when helpdesk registers a patient.
-          // Scoped to today's date OR any pending/active status (cross-day queue).
+          // ✅ Online appointments MUST be checked-in ('confirmed' / 'waiting') to enter doctor queue!
+          // Walk-in / offline can be Booked, pending, confirmed, in-progress, waiting
           $or: [
-            { date: { $gte: today, $lt: tomorrow } },
             {
+              type: { $ne: "online" },
               status: {
                 $in: [
                   "pending",
@@ -164,7 +164,17 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
                   "in-progress",
                   "Booked",
                   "waiting",
-                  "scheduled",
+                ],
+              },
+            },
+            {
+              type: "online",
+              status: {
+                $in: [
+                  "confirmed",
+                  "in-progress",
+                  "waiting",
+                  "arrived",
                 ],
               },
             },
@@ -183,7 +193,7 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
         .populate("hospital", "name address hospitalId")
         .sort({ date: 1, createdAt: 1 })
         .select(
-          "patient hospital date appointmentTime startTime type status reason createdAt mrn",
+          "patient hospital date appointmentTime startTime type status queue_status token_number token appointmentId paymentStatus fee amount patientDetails reason createdAt mrn",
         )
         .limit(300) // ✅ FIX: Increased limit from 50 to 300
         .lean(),
@@ -244,12 +254,17 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
 
         return todayAppointments.map((apt: any) => ({
           id: apt._id,
-          patientName: apt.patient?.name || "Unknown",
+          token_number: apt.token_number || apt.token || "",
+          appointmentId: apt.appointmentId || "",
+          patientName: apt.patient?.name || apt.patientDetails?.name || "Unknown",
           patientId: apt.patient?._id || "N/A",
           mrn: apt.mrn || profileMrnMap.get(apt.patient?._id?.toString()) || "N/A",
           time: apt.appointmentTime || apt.startTime || "N/A",
           type: apt.type || "Consultation",
           status: apt.status,
+          queue_status: apt.queue_status || "WAITING",
+          paymentStatus: apt.paymentStatus || "pending",
+          fee: apt.fee || apt.amount || 0,
           hospital: apt.hospital?.name || "Unknown",
           createdAt: apt.createdAt,
           date: apt.date,
@@ -411,7 +426,16 @@ export const updateDoctorProfile = async (req: Request, res: Response) => {
           profile.consultationDuration = req.body.consultationDuration;
         if (req.body.maxAppointmentsPerDay)
           profile.maxAppointmentsPerDay = req.body.maxAppointmentsPerDay;
-        if (req.body.availability) profile.availability = req.body.availability;
+        if (req.body.availability) {
+          try {
+            profile.availability =
+              typeof req.body.availability === "string"
+                ? JSON.parse(req.body.availability)
+                : req.body.availability;
+          } catch {
+            profile.availability = req.body.availability;
+          }
+        }
         if (req.body.hospital) profile.hospital = req.body.hospital;
 
         // 3. Update Bank & Payroll Details (Mandatory for payslips)

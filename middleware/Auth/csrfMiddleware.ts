@@ -50,8 +50,8 @@ export const validateCsrf = async (req: Request, res: Response, next: NextFuncti
   // Normalize path to handle cases where a reverse proxy stripped the /api prefix
   const normalizedPath = req.path.startsWith('/api') ? req.path.substring(4) : req.path;
 
-  // Skip public/auth paths
-  if (PUBLIC_PATHS.some(path => normalizedPath.startsWith(path))) return next();
+  // Skip public/auth paths or whatsapp gateway endpoints
+  if (PUBLIC_PATHS.some(path => normalizedPath.startsWith(path)) || normalizedPath.includes('/whatsapp/')) return next();
 
   // ✅ MOBILE/API BYPASS: Skip CSRF if a Bearer token is present.
   // Standard CSRF attacks cannot inject the Authorization header; 

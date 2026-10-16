@@ -1343,7 +1343,10 @@ export class HospitalAdminService {
                     ],
                   },
                 },
-                reason: { $ifNull: ["$reason", "OPD Consultation"] },
+                referenceId: "$_id",
+                symptoms: { $ifNull: ["$symptoms", []] },
+                reason: { $ifNull: ["$reason", { $arrayElemAt: ["$symptoms", 0] }, "OPD Consultation"] },
+                notes: { $ifNull: ["$notes", "$reason", ""] },
                 primaryDoctor: "$doctor",
                 patientName: {
                   $ifNull: [

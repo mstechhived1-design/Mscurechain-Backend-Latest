@@ -62,10 +62,12 @@ export interface IAppointment extends Document {
     guardianRelation?: string;
     guardianMobile?: string;
     doctorReference?: string;
+    fatherName?: string;
   };
 
   appointmentHonorific?: string;
   honorific?: string;
+  fatherName?: string;
   guardianName?: string;
   guardianRelation?: string;
   guardianMobile?: string;
@@ -118,6 +120,7 @@ export interface IAppointment extends Document {
   discountValue?: number;
   paymentStatus?: string;
   paymentMethod?: string;
+  paymentDetails?: any;
   stripeSessionId?: string;
 
   createdAt: Date;

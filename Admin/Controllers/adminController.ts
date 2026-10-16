@@ -2344,7 +2344,9 @@ export const getTransactions = async (req: Request, res: Response) => {
         receiptNumber: t.receiptNumber || t.referenceId?.receiptNumber || t.referenceId?.transactionId || "—",
         invoiceNumber: t.invoiceNumber,
         tests: t.tests,
-        reason: t.reason,
+        reason: t.reason || (Array.isArray(t.symptoms) && t.symptoms.length > 0 ? t.symptoms.join(', ') : t.symptoms) || t.referenceId?.reason,
+        symptoms: t.symptoms || t.referenceId?.symptoms || (t.reason ? [t.reason] : []),
+        notes: t.notes || t.referenceId?.notes || t.reason,
         patientDetails: {
           ...t.patientDetails,
           honorific: honorific,

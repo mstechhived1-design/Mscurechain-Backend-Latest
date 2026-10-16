@@ -125,6 +125,19 @@ const hospitalSchema = new Schema<IHospital>(
       type: Boolean,
       default: true,
     },
+    appointmentSettings: {
+      bookingWindowDays: { type: Number, default: 10 },
+      allowedSessions: {
+        morning: {
+          start: { type: String, default: "09:00" },
+          end: { type: String, default: "13:00" },
+        },
+        evening: {
+          start: { type: String, default: "17:00" },
+          end: { type: String, default: "21:00" },
+        },
+      },
+    },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true },

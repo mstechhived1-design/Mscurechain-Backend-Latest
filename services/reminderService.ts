@@ -410,63 +410,62 @@ export const processDischargeFollowUpReminders = async () => {
         .lean();
       const doctorUserMap = new Map(doctorUsers.map((u) => [u.name, u._id]));
 
-      await Promise.all(
-        dischargeRecords.map(async (record) => {
-          if (!record.followUpDate || !record.mrn) return;
+      for (const record of dischargeRecords) {
+        if (!record.followUpDate || !record.mrn) continue;
 
-          const daysDiff = getDaysDiff(record.followUpDate, now);
-          const dayIndex = reminderDays.indexOf(daysDiff);
+        const daysDiff = getDaysDiff(record.followUpDate, now);
+        const dayIndex = reminderDays.indexOf(daysDiff);
 
-          if (dayIndex === -1) return;
+        if (dayIndex === -1) continue;
 
-          const targetRemindersSent =
-            dayIndex * sortedSlots.length + currentSlotIndex + 1;
-          const currentlySent = (record as any).followUpRemindersSent || 0;
+        const targetRemindersSent =
+          dayIndex * sortedSlots.length + currentSlotIndex + 1;
+        const currentlySent = (record as any).followUpRemindersSent || 0;
 
-          if (currentlySent < targetRemindersSent) {
-            const profile: any = profileMap.get(record.mrn);
+        if (currentlySent < targetRemindersSent) {
+          const profile: any = profileMap.get(record.mrn);
 
-            if (profile?.user) {
-              const followUpDateStr = formatDateDMY(record.followUpDate);
-              const timeStr = new Date(record.followUpDate).toLocaleTimeString(
-                [],
-                { hour: "2-digit", minute: "2-digit" },
-              );
+          if (profile?.user) {
+            const followUpDateStr = formatDateDMY(record.followUpDate);
+            const timeStr = new Date(record.followUpDate).toLocaleTimeString(
+              [],
+              { hour: "2-digit", minute: "2-digit" },
+            );
 
-              let senderId = (record as any).createdBy;
-              if ((record as any).primaryDoctor) {
-                const docId = doctorUserMap.get((record as any).primaryDoctor);
-                if (docId) senderId = docId;
-              }
-
-              const patientName = profile?.name || "you";
-              const message = `Upcoming Follow-up for ${patientName}: You have a check-up scheduled on ${followUpDateStr} at ${timeStr === "12:00 AM" ? "hospital" : timeStr}. (${daysDiff === 1 ? "Tomorrow" : daysDiff + " days to go"})`;
-
-              await createNotification(null, {
-                hospital: hospitalId,
-                recipient: profile.user as any,
-                sender: senderId,
-                type: "followup_reminder",
-                message,
-                relatedId: record._id,
-              });
-
-              // 🛑 AUTOMATED EXTERNAL WHATSAPP DISPATCH DISABLED:
-              // Prevents unsolicited messages and protects linked devices from Meta spam restrictions.
-              // Notifications are delivered safely in-app and via Socket.IO.
-              safeEmit(`hospital_${hospitalId}`, "reminder:discharge_processed", {
-                type: "ipd_discharge_followup_reminder",
-                patientName: profile?.name || "Patient",
-                followUpDate: record.followUpDate,
-                dischargeId: record._id,
-              });
-
-              (record as any).followUpRemindersSent = targetRemindersSent;
-              await record.save();
+            let senderId = (record as any).createdBy;
+            if ((record as any).primaryDoctor) {
+              const docId = doctorUserMap.get((record as any).primaryDoctor);
+              if (docId) senderId = docId;
             }
+
+            const patientName = profile?.name || "you";
+            const message = `Upcoming Follow-up for ${patientName}: You have a check-up scheduled on ${followUpDateStr} at ${timeStr === "12:00 AM" ? "hospital" : timeStr}. (${daysDiff === 1 ? "Tomorrow" : daysDiff + " days to go"})`;
+
+            await createNotification(null, {
+              hospital: hospitalId,
+              recipient: profile.user as any,
+              sender: senderId,
+              type: "followup_reminder",
+              message,
+              relatedId: record._id,
+            });
+
+            // Sequential socket delivery
+            safeEmit(`hospital_${hospitalId}`, "reminder:discharge_processed", {
+              type: "ipd_discharge_followup_reminder",
+              patientName: profile?.name || "Patient",
+              followUpDate: record.followUpDate,
+              dischargeId: record._id,
+            });
+
+            (record as any).followUpRemindersSent = targetRemindersSent;
+            await record.save();
+
+            // Pacing delay between sequential discharge reminder records
+            await new Promise((resolve) => setTimeout(resolve, 1500));
           }
-        }),
-      );
+        }
+      }
     }
   } catch (err) {
     console.error(
