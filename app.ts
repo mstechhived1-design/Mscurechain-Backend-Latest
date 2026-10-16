@@ -226,49 +226,107 @@ io.on("connection", (socket) => {
 });
 
 // --- Broad CORS Configuration ---
-const allowedOrigins = (
-  process.env.FRONTEND_URL || "http://localhost:3000"
-).split(",").map(o => {
-  let origin = o.trim();
-  if (origin && !/^https?:\/\//i.test(origin)) {
-    origin = `https://${origin}`;
-  }
-  // Remove trailing slashes from origin
-  return origin.replace(/\/+$/, "");
-});
+const parseOrigins = (raw?: string): string[] => {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .map((origin) => {
+      let formatted = origin;
+      if (!/^https?:\/\//i.test(formatted)) {
+        formatted = `https://${formatted}`;
+      }
+      return formatted.replace(/\/+$/, "");
+    });
+};
+
+const defaultAllowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://localhost:3002",
+  "http://localhost:3003",
+  "http://localhost:5173",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+  "http://[::1]:3000",
+  "https://dhruva-hospital.vercel.app",
+  "https://www.mscurechain.com",
+  "https://mscurechain.com",
+  "https://hms-frontend-green.vercel.app",
+  ...parseOrigins(process.env.FRONTEND_URL),
+  ...parseOrigins(process.env.ALLOWED_ORIGINS),
+];
+
+const allowedOrigins = Array.from(new Set(defaultAllowedOrigins));
 
 console.log("FRONTEND_URL from process.env:", process.env.FRONTEND_URL);
 console.log("Computed Allowed Origins:", allowedOrigins);
 
-// Always allow standard dev origins
-if (process.env.NODE_ENV !== "production") {
-  if (!allowedOrigins.includes("http://localhost:3000")) allowedOrigins.push("http://localhost:3000");
-  if (!allowedOrigins.includes("http://localhost:3001")) allowedOrigins.push("http://localhost:3001");
-  if (!allowedOrigins.includes("http://localhost:3002")) allowedOrigins.push("http://localhost:3002");
-  if (!allowedOrigins.includes("http://localhost:3003")) allowedOrigins.push("http://localhost:3003");
-  if (!allowedOrigins.includes("http://127.0.0.1:3000")) allowedOrigins.push("http://127.0.0.1:3000");
-}
+const isOriginAllowed = (origin?: string): boolean => {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname;
+
+    // Allow all Vercel deployment & preview domains (e.g. dhruva-hospital.vercel.app)
+    if (hostname.endsWith(".vercel.app")) return true;
+
+    // Allow mscurechain.com and subdomains
+    if (hostname === "mscurechain.com" || hostname.endsWith(".mscurechain.com")) return true;
+
+    // Allow railway.app domains
+    if (hostname === "railway.app" || hostname.endsWith(".railway.app")) return true;
+
+    // Allow local development hostnames & private network IPs
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "[::1]" ||
+      hostname.startsWith("192.168.") ||
+      hostname.startsWith("10.") ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+    ) {
+      return true;
+    }
+  } catch {
+    // Malformed URL, fall through
+  }
+
+  return false;
+};
 
 app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, etc.)
-      if (!origin) return callback(null, true);
-      
-      // Exact match check
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      
-      // Allow any local network IP origin in development for testing
-      if (process.env.NODE_ENV !== "production") {
-        if (origin.startsWith("http://192.168.") || origin.startsWith("http://10.") || origin.startsWith("http://172.")) {
-          return callback(null, true);
-        }
-      }
-      
-      console.warn(`[CORS] Blocked origin: ${origin}`);
-      return callback(null, false);
-    },
-    credentials: true,
+  cors((req: Request, callback: (err: Error | null, options?: cors.CorsOptions) => void) => {
+    const origin = req.header("Origin");
+    const path = req.originalUrl || req.url || "";
+    const isPublicRoute = path.startsWith("/api/public") || path.includes("/public/");
+
+    // Public API endpoints (like doctor lists, appointment booking, blogs) allow any origin
+    if (isPublicRoute || isOriginAllowed(origin)) {
+      callback(null, {
+        origin: origin || true,
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: [
+          "Content-Type",
+          "Authorization",
+          "X-CSRF-Token",
+          "X-Requested-With",
+          "Accept",
+          "hospital-id",
+          "x-tenant-id",
+          "x-hospital-id",
+          "Origin",
+        ],
+        exposedHeaders: ["Content-Range", "X-Content-Range"],
+      });
+    } else {
+      console.warn(`[CORS] Blocked origin: ${origin} for path: ${path}`);
+      callback(null, { origin: false });
+    }
   }),
 );
 app.use(express.json({ limit: "50mb" }));
