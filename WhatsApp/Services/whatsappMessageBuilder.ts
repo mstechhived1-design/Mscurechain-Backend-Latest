@@ -7,6 +7,9 @@ export const READ_MORE = String.fromCharCode(8206).repeat(4001);
 
 export interface AppointmentMessageData {
   patientName: string;
+  tokenNo?: string;
+  tokenNumber?: string;
+  token_number?: string;
   mrn?: string;
   appointmentId?: string;
   doctorName?: string;
@@ -19,6 +22,29 @@ export interface AppointmentMessageData {
   instructions?: string;
 }
 
+export function formatDynamicWhatsAppCaption(
+  primaryContent: string,
+  collapsibleContent?: string,
+  targetFoldThreshold: number = 780,
+  maxTotalChars: number = 920
+): string {
+  const primary = (primaryContent || '').trim();
+  const collapsible = (collapsibleContent || '').trim();
+
+  if (!collapsible) {
+    return primary;
+  }
+
+  const baseChars = primary.length + collapsible.length + 2;
+  const needed = Math.max(0, targetFoldThreshold - baseChars);
+  const maxPossible = Math.max(0, maxTotalChars - baseChars);
+
+  const markerCount = Math.min(Math.max(needed, 280), maxPossible);
+  const readMoreMarkers = String.fromCharCode(8206).repeat(markerCount);
+
+  return `${primary}\n${readMoreMarkers}\n${collapsible}`;
+}
+
 export function buildRichAppointmentMessage(data: AppointmentMessageData): string {
   const pName = data.patientName || "Valued Patient";
   const isMongoId = (val?: string) => typeof val === "string" && /^[0-9a-fA-F]{24}$/.test(val);
@@ -28,7 +54,7 @@ export function buildRichAppointmentMessage(data: AppointmentMessageData): strin
   const docName = data.doctorName ? (data.doctorName.startsWith("Dr.") ? data.doctorName : `Dr. ${data.doctorName}`) : "Attending Specialist";
   const spec = data.specialty || "General Consultation";
   const hospName = data.hospitalName || "MsCurechain Healthcare";
-  
+
   let dateFormatted = "N/A";
   if (data.date) {
     try {
@@ -45,26 +71,32 @@ export function buildRichAppointmentMessage(data: AppointmentMessageData): strin
 
   const timeStr = data.timeSlot || "Scheduled Slot";
   const feeStr = data.fee ? `₹${data.fee}` : "Paid";
-  const statusStr = data.paymentStatus || "Confirmed";
+  const rawStatus = (data.paymentStatus || "PAID").toUpperCase();
+  const isPaid = /PAID|COMPLETED/i.test(rawStatus) || (rawStatus !== "UNPAID" && rawStatus !== "PENDING" && Number(data.fee) > 0);
+  const paymentStatusDisplay = isPaid ? "PAID" : "UNPAID";
 
-  return `🧾 *APPOINTMENT RECEIPT & CONFIRMATION*
-━━━━━━━━━━━━━━━━━━━━
-👤 *Patient Name:* ${pName}
-🆔 *MRN / Token ID:* ${idStr}
-👨‍⚕️ *Doctor Name:* ${docName}
-🩺 *Specialty:* ${spec}
-📅 *Appointment Date:* ${dateFormatted}
-⏰ *Time Slot:* ${timeStr}
-🏢 *Hospital Name:* ${hospName}
-💰 *Consultation Fee:* ${feeStr} (${statusStr})
-━━━━━━━━━━━━━━━━━━━━
-${READ_MORE}
-📌 *Important Patient Instructions:*
-• Please arrive 15 minutes before your scheduled appointment time.
-• Bring all previous medical records, prescriptions, and lab reports.
-• Show this token/receipt at the Front Desk upon arrival.
+  const rawToken = data.tokenNo || data.tokenNumber || data.token_number;
+  const tokenDisplay = rawToken ? (!isNaN(Number(rawToken)) ? `#${String(rawToken).padStart(2, "0")}` : (String(rawToken).startsWith("#") ? rawToken : `#${rawToken}`)) : null;
 
-Thank you for choosing ${hospName}! Stay Healthy! 🏥`;
+  const primary = `*${hospName.toUpperCase()}*
+━━━━━━━━━━━━━━━━━━
+📋 *APPOINTMENT RECEIPT*
+*Patient:* ${pName}
+*Token No:* ${tokenDisplay || 'N/A'} | *MR No:* ${idStr}
+*Doctor:* ${docName} (${spec})
+*Date & Time:* ${dateFormatted} • ${timeStr}
+*Payment:* ${feeStr} (${paymentStatusDisplay})
+━━━━━━━━━━━━━━━━━━`;
+
+  const instructions = `📌 *Important Patient Instructions:*
+• Arrive 15 mins before scheduled time.
+• Show this token/receipt at Front Desk.
+• Bring previous records & prescriptions.
+• Contact ${hospName} for queries.
+
+Thank you for choosing ${hospName}. Stay Healthy.`;
+
+  return formatDynamicWhatsAppCaption(primary, instructions);
 }
 
 export function buildRichFollowUpReminderMessage(data: {
@@ -80,7 +112,7 @@ export function buildRichFollowUpReminderMessage(data: {
   const docName = data.doctorName ? (data.doctorName.startsWith("Dr.") ? data.doctorName : `Dr. ${data.doctorName}`) : "your Doctor";
   const hospName = data.hospitalName || "MsCurechain Healthcare";
   const timeStr = data.timeSlot || "hospital hours";
-  
+
   let dateFormatted = "N/A";
   if (data.date) {
     try {
@@ -148,7 +180,7 @@ export function buildPatientWelcomeMessage(data: PatientWelcomeMessageData): str
         const year = d.getFullYear();
         dateStr = `${day}/${month}/${year}`;
       }
-    } catch (_) {}
+    } catch (_) { }
   } else {
     const d = new Date();
     const day = String(d.getDate()).padStart(2, "0");

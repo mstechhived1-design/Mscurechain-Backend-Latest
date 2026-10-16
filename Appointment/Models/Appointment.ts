@@ -92,10 +92,12 @@ const appointmentSchema = new Schema<IAppointment>(
       guardianRelation: String,
       guardianMobile: String,
       doctorReference: String,
+      fatherName: String,
     },
 
     appointmentHonorific: String,
     honorific: String,
+    fatherName: String,
     guardianName: String,
     guardianRelation: String,
     guardianMobile: String,
@@ -166,6 +168,7 @@ const appointmentSchema = new Schema<IAppointment>(
     discountValue: { type: Number, default: 0 },
     paymentStatus: String,
     paymentMethod: String,
+    paymentDetails: Schema.Types.Mixed,
 
     consultationStartTime: Date,
     consultationEndTime: Date,
@@ -259,19 +262,20 @@ const appointmentSchema = new Schema<IAppointment>(
 
 // 🛡️ Pre-save hook to sync isIPD with type and manage admissionId
 appointmentSchema.pre("save", function (next) {
-  if (this.type && this.type.toUpperCase() === "IPD") {
-    this.isIPD = true;
+  const doc = this as any;
+  if (doc.type && doc.type.toUpperCase() === "IPD") {
+    doc.isIPD = true;
     // Generate admissionId if it's IPD and missing
-    if (!this.admissionId) {
+    if (!doc.admissionId) {
       const timestamp = Date.now().toString();
       const random = Math.floor(Math.random() * 1000)
         .toString()
         .padStart(3, "0");
-      this.admissionId = `ADM-${timestamp}-${random}`;
+      doc.admissionId = `ADM-${timestamp}-${random}`;
     }
   } else {
     // Ensure admissionId is empty if it's not an IPD appointment
-    this.admissionId = undefined;
+    doc.admissionId = undefined;
   }
   next();
 });

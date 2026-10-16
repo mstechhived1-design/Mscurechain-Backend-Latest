@@ -79,6 +79,13 @@ export interface IHospital extends Document {
     hwidLock?: boolean;
     boundHwid?: string;
   };
+  appointmentSettings?: {
+    bookingWindowDays?: number;
+    allowedSessions?: {
+      morning?: { start: string; end: string; available?: boolean };
+      evening?: { start: string; end: string; available?: boolean };
+    };
+  };
   createdAt: Date;
   updatedAt: Date;
 }

@@ -193,8 +193,6 @@ export const helpDeskDashboard = asyncHandler(
                 "booked",
                 "waiting",
                 "Waiting",
-                "scheduled",
-                "Scheduled",
                 "Arrived",
                 "arrived",
               ],

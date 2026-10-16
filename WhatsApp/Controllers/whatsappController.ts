@@ -8,13 +8,25 @@ const getHospitalId = (req: Request): string => {
   return req.params.hospitalId || (req as any).user?.hospitalId || req.headers["x-hospital-id"] as string;
 };
 
+// Normalizes role or raw department variations to canonical keys ('pharma' | 'lab' | 'frontdesk' | 'doctor')
+const normalizeDepartment = (dept?: string): string | undefined => {
+  if (!dept) return undefined;
+  const d = dept.toLowerCase().trim();
+  if (d.includes('pharma') || d.includes('pharmacy')) return 'pharma';
+  if (d.includes('lab')) return 'lab';
+  if (d.includes('helpdesk') || d.includes('frontdesk')) return 'frontdesk';
+  if (d.includes('doctor')) return 'doctor';
+  return d;
+};
+
 const resolveInstanceKey = async (hospitalId: string, department?: string): Promise<{ instanceKey: string; isDedicated: boolean; deptName?: string }> => {
-  if (!department) return { instanceKey: hospitalId, isDedicated: false };
+  const normDept = normalizeDepartment(department);
+  if (!normDept) return { instanceKey: hospitalId, isDedicated: false };
   try {
     const config = await WhatsAppConfig.findOne({ hospitalId }).lean();
-    const deptRoute = (config?.departmentRouting as any)?.[department];
+    const deptRoute = (config?.departmentRouting as any)?.[normDept];
     if (deptRoute?.enabled) {
-      return { instanceKey: `${hospitalId}_${department}`, isDedicated: true, deptName: deptRoute.name };
+      return { instanceKey: `${hospitalId}_${normDept}`, isDedicated: true, deptName: deptRoute.name };
     }
   } catch (e) {}
   return { instanceKey: hospitalId, isDedicated: false };
@@ -23,7 +35,8 @@ const resolveInstanceKey = async (hospitalId: string, department?: string): Prom
 export const getStatus = async (req: Request, res: Response) => {
   try {
     const hospitalId = getHospitalId(req);
-    const department = (req.query?.department || req.body?.department || req.headers?.["x-department"]) as string;
+    const rawDept = (req.query?.department || req.body?.department || req.headers?.["x-department"]) as string;
+    const department = normalizeDepartment(rawDept);
     if (!hospitalId) return res.status(400).json({ error: "hospitalId required" });
 
     const config = await WhatsAppConfig.findOne({ hospitalId }).lean();
@@ -40,28 +53,38 @@ export const getStatus = async (req: Request, res: Response) => {
     if (department) {
       const isEnabled = Boolean((routing as any)?.[department]?.enabled);
       if (!isEnabled) {
+        const mainService = whatsappManager.getInstance(hospitalId);
+        const mainStatus = mainService.getStatus();
         return res.json({
           success: true,
-          status: "DEFAULT_HOSPITAL_GATEWAY",
+          ...mainStatus,
+          status: mainStatus.status === 'CONNECTED' ? 'CONNECTED' : (config?.connectedNumber ? 'CONNECTED' : mainStatus.status),
           dedicatedEnabled: false,
+          isDedicated: false,
           department,
           departmentName: (routing as any)?.[department]?.name || department,
-          hospitalMainNumber: config?.connectedNumber,
-          connectedNumber: config?.connectedNumber,
-          message: "Dedicated WhatsApp scanner is currently disabled by Hospital Admin. All notifications automatically use the Hospital Main Gateway.",
+          hospitalMainNumber: mainStatus.connectedNumber || config?.connectedNumber,
+          connectedNumber: mainStatus.connectedNumber || config?.connectedNumber,
+          message: "Using Hospital Main Gateway",
         });
       }
 
       // Department has dedicated routing enabled -> return dedicated Baileys instance status
       const deptService = whatsappManager.getInstance(`${hospitalId}_${department}`, `${(routing as any)?.[department]?.name || department}`);
       const deptStatus = deptService.getStatus();
+      const connectedNum = deptStatus.connectedNumber || (routing as any)?.[department]?.phoneNumber || null;
+      const isLive = deptStatus.status === 'CONNECTED' || Boolean(connectedNum && deptStatus.status !== 'DISCONNECTED');
       return res.json({
         success: true,
         ...deptStatus,
+        status: isLive ? 'CONNECTED' : deptStatus.status,
         dedicatedEnabled: true,
+        isDedicated: true,
         department,
         departmentName: (routing as any)?.[department]?.name || department,
         hospitalMainNumber: config?.connectedNumber,
+        connectedNumber: connectedNum,
+        deviceName: deptStatus.deviceName || `${(routing as any)?.[department]?.name || department} Gateway`,
       });
     }
 
@@ -273,16 +296,17 @@ export const sendMedia = async (req: Request, res: Response) => {
     let finalCaption = caption || '';
     let routingSenderNote = '';
 
-    if (department) {
+    const normDept = normalizeDepartment(department);
+    if (normDept) {
       const config = await WhatsAppConfig.findOne({ hospitalId }).lean();
-      const deptRoute = (config?.departmentRouting as any)?.[department];
+      const deptRoute = (config?.departmentRouting as any)?.[normDept];
       if (deptRoute?.enabled) {
-        const deptService = whatsappManager.getInstance(`${hospitalId}_${department}`, deptRoute.name);
+        const deptService = whatsappManager.getInstance(`${hospitalId}_${normDept}`, deptRoute.name);
         if (deptService.status === "CONNECTED") {
           waService = deptService;
           usedDedicated = true;
         } else if (deptRoute.phoneNumber) {
-          routingSenderNote = `\n\n━━━━━━━━━━━━━━━━━━\n*Dispatched from Dedicated ${deptRoute.name || department.toUpperCase()} Line: +91 ${deptRoute.phoneNumber}*`;
+          routingSenderNote = `\n\n━━━━━━━━━━━━━━━━━━\n*Dispatched from Dedicated ${deptRoute.name || normDept.toUpperCase()} Line: +91 ${deptRoute.phoneNumber}*`;
         }
       }
     }
@@ -317,16 +341,17 @@ export const sendMessage = async (req: Request, res: Response) => {
     let waService = whatsappManager.getInstance(hospitalId);
     let usedDedicated = false;
 
-    if (department) {
+    const normDept = normalizeDepartment(department);
+    if (normDept) {
       const config = await WhatsAppConfig.findOne({ hospitalId }).lean();
-      const deptRoute = (config?.departmentRouting as any)?.[department];
+      const deptRoute = (config?.departmentRouting as any)?.[normDept];
       if (deptRoute?.enabled) {
-        const deptService = whatsappManager.getInstance(`${hospitalId}_${department}`, deptRoute.name);
+        const deptService = whatsappManager.getInstance(`${hospitalId}_${normDept}`, deptRoute.name);
         if (deptService.status === "CONNECTED") {
           waService = deptService;
           usedDedicated = true;
         } else if (deptRoute.phoneNumber) {
-          finalMessage = `${message}\n\n*Dedicated ${deptRoute.name || department.toUpperCase()}: +91 ${deptRoute.phoneNumber}*`;
+          finalMessage = `${message}\n\n*Dedicated ${deptRoute.name || normDept.toUpperCase()}: +91 ${deptRoute.phoneNumber}*`;
         }
       }
     }

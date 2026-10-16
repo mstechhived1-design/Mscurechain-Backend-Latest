@@ -32,6 +32,8 @@ import {
   getAppointmentById,
   updateAppointmentStatus,
   bookAppointment,
+  editAppointment,
+  checkInAppointment,
 } from "../../Appointment/Controllers/bookingController.js";
 import {
   createDoctor,
@@ -86,6 +88,8 @@ router.put("/patients/:patientId", updatePatient);
 router.get("/appointments", getAppointments);
 router.get("/appointments/:id", getAppointmentById);
 router.post("/appointments", bookAppointment);
+router.put("/appointments/:id", editAppointment);
+router.post("/appointments/:id/check-in", checkInAppointment);
 router.patch("/appointments/:id/status", updateAppointmentStatus);
 
 // Transactions

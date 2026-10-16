@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import Appointment from "../Models/Appointment.js";
 import DoctorProfile from "../../Doctor/Models/DoctorProfile.js";
 import Hospital from "../../Hospital/Models/Hospital.js";
+import HospitalCounter from "../../Hospital/Models/HospitalCounter.js";
 import User from "../../Auth/Models/User.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
 import Patient from "../../Patient/Models/Patient.js";
@@ -26,6 +27,7 @@ import Transaction from "../../Admin/Models/Transaction.js";
 import IPDAdmission from "../../IPD/Models/IPDAdmission.js";
 import asyncHandler from "../../middleware/Error/errorMiddleware.js";
 import { invalidateDoctorCache } from "../../utils/cacheInvalidation.js";
+import redisService from "../../config/redis.js";
 import {
   generateTransactionId,
   generateReceiptNumber,
@@ -261,6 +263,7 @@ async function computeFollowUpStatus(
   doctorId: string | undefined,
   appointmentDate: Date,
   appointmentType: string,
+  excludeAppointmentId?: string,
 ): Promise<{
   eligible: boolean;
   visitCount: number;
@@ -308,7 +311,13 @@ async function computeFollowUpStatus(
   };
 
   // ── 3. Resolve all possible patient IDs ────────────────────────────────────
-  const ACTUAL_CONSULTATION_STATUSES  = ["completed", "confirmed", "booked", "scheduled", "arrived", "in-progress", "admitted"];
+  // A consultation ONLY counts for follow-up if it was actually COMPLETED by a doctor.
+  // Appointments in 'confirmed', 'waiting', 'scheduled', 'booked' have NOT been consulted yet.
+  const ACTUAL_CONSULTATION_STATUSES  = ["completed"];
+
+  const excludeFilter = (excludeAppointmentId && mongoose.Types.ObjectId.isValid(excludeAppointmentId))
+    ? { _id: { $ne: new mongoose.Types.ObjectId(excludeAppointmentId) } }
+    : {};
 
   let patientIds: string[] = [String(patientId)];
   try {
@@ -338,6 +347,7 @@ async function computeFollowUpStatus(
   // ── 4. Count visits ────────────────────────────────────────────────────────
   const overallOpdCount = await (Appointment.countDocuments({
     ...patientMatchCondition,
+    ...excludeFilter,
     hospital: hospitalId,
     status: { $in: ACTUAL_CONSULTATION_STATUSES }
   }) as any).unscoped();
@@ -345,7 +355,7 @@ async function computeFollowUpStatus(
   const overallIpdCount = await (IPDAdmission.countDocuments({
     ...patientMatchCondition,
     hospital: hospitalId,
-    status: { $in: ["Active", "Discharged", "Discharge Initiated"] }
+    status: { $in: ["Discharged"] }
   }) as any).unscoped();
 
   const overallPaidCount = overallOpdCount + overallIpdCount;
@@ -354,6 +364,7 @@ async function computeFollowUpStatus(
   if (doctorId) {
     const doctorOpdCount = await (Appointment.countDocuments({
       ...patientMatchCondition,
+      ...excludeFilter,
       hospital:  hospitalId,
       doctor:    doctorId,
       status:    { $in: ACTUAL_CONSULTATION_STATUSES }
@@ -363,7 +374,7 @@ async function computeFollowUpStatus(
       ...patientMatchCondition,
       hospital:  hospitalId,
       primaryDoctor: doctorId,
-      status: { $in: ["Active", "Discharged", "Discharge Initiated"] }
+      status: { $in: ["Discharged"] }
     }) as any).unscoped();
 
     doctorPaidCount = doctorOpdCount + doctorIpdCount;
@@ -379,6 +390,7 @@ async function computeFollowUpStatus(
     const lastOpd = await (Appointment.findOne({
       $and: [
         patientMatchCondition,
+        excludeFilter,
         {
           hospital: hospitalId,
           doctor:   doctorId,
@@ -398,7 +410,7 @@ async function computeFollowUpStatus(
         {
           hospital: hospitalId,
           primaryDoctor: doctorId,
-          status: { $in: ["Active", "Discharged", "Discharge Initiated"] }
+          status: { $in: ["Discharged"] }
         }
       ]
     }) as any)
@@ -421,6 +433,7 @@ async function computeFollowUpStatus(
   const lastOpdOverall: any = await (Appointment.findOne({
     $and: [
       patientMatchCondition,
+      excludeFilter,
       {
         hospital: hospitalId,
         status:   { $in: ACTUAL_CONSULTATION_STATUSES },
@@ -438,7 +451,7 @@ async function computeFollowUpStatus(
       patientMatchCondition,
       {
         hospital: hospitalId,
-        status: { $in: ["Active", "Discharged", "Discharge Initiated"] }
+        status: { $in: ["Discharged"] }
       }
     ]
   }) as any)
@@ -1031,18 +1044,20 @@ export const bookAppointment = asyncHandler(
         console.warn("[Booking] computeFollowUpStatus failed (non-fatal):", fsErr);
       }
 
-      // ── Compute daily exact token number ─────────────────────────────────────
-      const startOfDayToken = new Date(date);
-      startOfDayToken.setHours(0, 0, 0, 0);
-      const endOfDayToken = new Date(date);
-      endOfDayToken.setHours(23, 59, 59, 999);
+      // ── Unified Atomic Queue Token Generation ─────────────────────────────────
+      // Synchronized with online web queue (HospitalCounter keyed by doctor & calendar date)
+      const targetDateString = typeof date === "string"
+        ? date.split("T")[0]
+        : new Date(date).toISOString().split("T")[0];
+      const counterKey = `DOCTOR_QUEUE_${finalDoctorId}_${targetDateString}`;
 
-      const activeTodayCount = await Appointment.countDocuments({
-         hospital: targetHospitalId,
-         date: { $gte: startOfDayToken, $lte: endOfDayToken },
-         status: { $nin: ["cancelled", "rejected", "no-show"] }
-      });
-      const generatedTokenNumber = String(activeTodayCount + 1).padStart(2, "0");
+      const counter = await HospitalCounter.findOneAndUpdate(
+        { hospital: targetHospitalId, type: counterKey },
+        { $inc: { sequence: 1 } },
+        { upsert: true, new: true }
+      );
+
+      const generatedTokenNumber = String(counter.sequence).padStart(2, "0");
 
       const finalAppointmentHonorific = appointmentHonorific || honorific || patientProfile?.honorific;
       const finalGuardianName = guardianName || bookingReq.body.patientDetails?.guardianName || patientProfile?.GuardianName;
@@ -1510,15 +1525,20 @@ export const updateAppointmentStatus = asyncHandler(
       const { id } = updateReq.params;
       const { status, reason, duration, vitals, symptoms } = updateReq.body;
 
-      if (
-        ![
-          "confirmed",
-          "rejected",
-          "cancelled",
-          "completed",
-          "in-progress",
-        ].includes(status)
-      ) {
+      const allowedStatuses = [
+        "confirmed",
+        "rejected",
+        "cancelled",
+        "completed",
+        "in-progress",
+        "waiting",
+        "arrived",
+        "Arrived",
+        "scheduled",
+        "booked",
+        "Booked",
+      ];
+      if (!allowedStatuses.includes(status)) {
         return res.status(400).json({ message: "Invalid status" });
       }
 
@@ -1528,6 +1548,10 @@ export const updateAppointmentStatus = asyncHandler(
             ? "cancelled"
             : status,
       };
+
+      if (["waiting", "arrived", "Arrived"].includes(status)) {
+        updateData.queue_status = "WAITING";
+      }
 
       if (reason) updateData.reason = reason;
       if (symptoms) updateData.symptoms = Array.isArray(symptoms) ? symptoms : [symptoms];
@@ -1904,6 +1928,16 @@ export const updateAppointmentStatus = asyncHandler(
             if (doctorUserId)
               await invalidateDoctorCache(doctorUserId.toString());
           }
+
+          // Queue & TV update for checked-in / waiting / completed appointments
+          if (["waiting", "arrived", "Arrived", "confirmed", "in-progress", "completed"].includes(status) && appointment.doctor && appointment.hospital) {
+            try {
+              const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
+              await emitQueueUpdate(updateReq.io, appointment.doctor, appointment.hospital);
+            } catch (qErr) {
+              console.warn("[Status Update] emitQueueUpdate error:", qErr);
+            }
+          }
         } catch (socketErr) {
           console.error("[Status Update] Socket error:", socketErr);
         }
@@ -1994,7 +2028,21 @@ export const getAppointments = asyncHandler(
         query.status = { $regex: req.query.status as string, $options: "i" };
       }
 
-      if (req.query.date) {
+      if (req.query.startDate || req.query.endDate) {
+        const dateCond: any = {};
+        if (req.query.startDate) {
+          const s = new Date(req.query.startDate as string);
+          s.setHours(0, 0, 0, 0);
+          dateCond.$gte = s;
+        }
+        if (req.query.endDate) {
+          const e = new Date(req.query.endDate as string);
+          e.setHours(23, 59, 59, 999);
+          dateCond.$lte = e;
+        }
+        query.date = dateCond;
+        console.log(`[getAppointments] Date Range Filter:`, dateCond);
+      } else if (req.query.date) {
         const dateStr = req.query.date as string;
         const startDate = new Date(dateStr);
         startDate.setHours(0, 0, 0, 0);
@@ -2002,7 +2050,7 @@ export const getAppointments = asyncHandler(
         endDate.setHours(23, 59, 59, 999);
         query.date = { $gte: startDate, $lte: endDate };
         console.log(
-          `[getAppointments] Date Filter: ${startDate.toISOString()} to ${endDate.toISOString()}`,
+          `[getAppointments] Single Date Filter: ${startDate.toISOString()} to ${endDate.toISOString()}`,
         );
       } else {
         // Default to today and future for doctor/patient if no date specified
@@ -2507,7 +2555,8 @@ export const checkFollowUpEligibility = asyncHandler(
   async (req: Request, res: Response) => {
     try {
       const hospitalId = (req as any).tenantId || (req as any).user.hospital;
-      const { patientId, doctorId, type, date } = req.query;
+      const { patientId, doctorId, type, date, excludeAppointmentId, appointmentId } = req.query;
+      const excludeId = (excludeAppointmentId || appointmentId) as string | undefined;
 
       if (!hospitalId || !patientId) {
         return res.status(400).json({ message: "Hospital and Patient ID required" });
@@ -2529,6 +2578,7 @@ export const checkFollowUpEligibility = asyncHandler(
         doctorId ? String(doctorId) : undefined,
         date ? new Date(String(date)) : new Date(),
         String(type || "OPD"),
+        excludeId
       );
 
       console.log(`[FollowUp] patientId=${patientId} doctorId=${doctorId} hospitalId=${hospitalId}`);
@@ -2575,5 +2625,295 @@ export const changeAppointmentDoctor = asyncHandler(
     await appointment.save();
 
     res.json({ message: 'Doctor updated successfully', appointment });
+  }
+);
+
+export const editAppointment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const {
+      patientName,
+      phone,
+      gender,
+      age,
+      dob,
+      fatherName,
+      guardianName,
+      guardianRelation,
+      guardianMobile,
+      doctorReference,
+      doctorId,
+      date,
+      appointmentTime,
+      reason,
+      notes,
+      symptoms,
+      honorific,
+      fee,
+      amount,
+      discount,
+      discountType,
+      paymentStatus,
+      paymentMethod,
+      paymentMode,
+      vitals,
+      bloodGroup,
+      address,
+      emergencyContact,
+      type,
+    } = req.body;
+
+    const appointment = await (Appointment.findById(id) as any).unscoped();
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: "Appointment not found" });
+    }
+
+    // SERVER GUARD: Edit is ONLY valid before doctor starts consultation!
+    const currentStatus = (appointment.status || "").toLowerCase();
+    if (currentStatus === "in-progress" || currentStatus === "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot edit appointment. Consultation has already started or completed.",
+      });
+    }
+
+    if (doctorId && mongoose.Types.ObjectId.isValid(doctorId)) {
+      appointment.doctor = doctorId;
+    }
+    if (date) {
+      const parsedDate = new Date(date);
+      if (!isNaN(parsedDate.getTime())) {
+        appointment.date = parsedDate;
+      }
+    }
+    if (appointmentTime) {
+      appointment.appointmentTime = appointmentTime;
+      appointment.startTime = appointmentTime;
+    }
+    if (reason !== undefined) appointment.reason = reason;
+    if (notes !== undefined && !reason) appointment.reason = notes;
+    if (symptoms !== undefined) {
+      appointment.symptoms = Array.isArray(symptoms) ? symptoms : [symptoms];
+    } else if (notes || reason) {
+      appointment.symptoms = [notes || reason];
+    }
+
+    if (honorific) {
+      appointment.honorific = honorific;
+      appointment.appointmentHonorific = honorific;
+    }
+    if (fatherName !== undefined) appointment.fatherName = fatherName ? fatherName.trim() : undefined;
+    if (guardianName !== undefined) appointment.guardianName = guardianName ? guardianName.trim() : undefined;
+    if (guardianRelation !== undefined) appointment.guardianRelation = guardianRelation ? guardianRelation.trim() : undefined;
+    if (guardianMobile !== undefined) appointment.guardianMobile = guardianMobile ? guardianMobile.trim() : undefined;
+    if (doctorReference !== undefined) appointment.doctorReference = doctorReference ? doctorReference.trim() : undefined;
+
+    if (fee !== undefined) appointment.fee = Number(fee);
+    if (amount !== undefined) appointment.amount = Number(amount);
+    if (discount !== undefined) appointment.discount = Number(discount);
+    if (discountType !== undefined) appointment.discountType = discountType;
+    if (paymentStatus) appointment.paymentStatus = paymentStatus;
+    if (paymentMethod || paymentMode) {
+      appointment.paymentMethod = paymentMethod || paymentMode;
+      appointment.paymentMode = paymentMode || paymentMethod;
+    }
+    if (type) appointment.type = type;
+
+    if (!appointment.patientDetails) appointment.patientDetails = {};
+    if (patientName) appointment.patientDetails.name = patientName.trim();
+    if (age !== undefined) appointment.patientDetails.age = String(age);
+    if (gender) appointment.patientDetails.gender = gender;
+    if (fatherName !== undefined) appointment.patientDetails.fatherName = fatherName ? fatherName.trim() : undefined;
+    if (guardianName !== undefined) appointment.patientDetails.guardianName = guardianName ? guardianName.trim() : undefined;
+    if (guardianRelation !== undefined) appointment.patientDetails.guardianRelation = guardianRelation ? guardianRelation.trim() : undefined;
+    if (guardianMobile !== undefined) appointment.patientDetails.guardianMobile = guardianMobile ? guardianMobile.trim() : undefined;
+    if (doctorReference !== undefined) appointment.patientDetails.doctorReference = doctorReference ? doctorReference.trim() : undefined;
+    if (honorific) appointment.patientDetails.honorific = honorific;
+
+    if (vitals && typeof vitals === "object") {
+      if (!appointment.vitals) appointment.vitals = {};
+      if (vitals.bp || vitals.bloodPressure) appointment.vitals.bloodPressure = vitals.bp || vitals.bloodPressure;
+      if (vitals.temperature) appointment.vitals.temperature = vitals.temperature;
+      if (vitals.pulse) appointment.vitals.pulse = vitals.pulse;
+      if (vitals.spo2 || vitals.spO2) appointment.vitals.spO2 = vitals.spo2 || vitals.spO2;
+      if (vitals.height) appointment.vitals.height = vitals.height;
+      if (vitals.weight) appointment.vitals.weight = vitals.weight;
+      if (vitals.glucose || vitals.sugar) appointment.vitals.glucose = vitals.glucose || vitals.sugar;
+    }
+
+    await appointment.save();
+
+    // If patient User exists, sync name and mobile
+    if (appointment.patient) {
+      const patientUpdate: any = {};
+      if (patientName) patientUpdate.name = patientName.trim();
+      if (phone) patientUpdate.mobile = phone.replace(/\D/g, "").slice(-10);
+      if (Object.keys(patientUpdate).length > 0) {
+        await (User.findByIdAndUpdate(appointment.patient, { $set: patientUpdate }) as any).unscoped();
+      }
+
+      const profileUpdate: any = {};
+      if (fatherName) profileUpdate.fatherName = fatherName.trim();
+      if (guardianName) profileUpdate.GuardianName = guardianName.trim();
+      if (guardianRelation) profileUpdate.GuardianRelation = guardianRelation.trim();
+      if (guardianMobile) profileUpdate.GuardianMobile = guardianMobile.trim();
+      if (doctorReference) profileUpdate.doctorReference = doctorReference.trim();
+      if (gender) profileUpdate.gender = gender.toLowerCase();
+      if (bloodGroup && bloodGroup !== "N/A") profileUpdate.bloodGroup = bloodGroup;
+      if (address && address !== "N/A") profileUpdate.address = address;
+      if (emergencyContact && emergencyContact !== "N/A") profileUpdate.alternateNumber = emergencyContact;
+      if (dob) {
+        const parsedDob = new Date(dob);
+        if (!isNaN(parsedDob.getTime())) profileUpdate.dob = parsedDob;
+      }
+      if (Object.keys(profileUpdate).length > 0) {
+        await (PatientProfile.findOneAndUpdate(
+          { user: appointment.patient, hospital: appointment.hospital },
+          { $set: profileUpdate }
+        ) as any).unscoped();
+      }
+    }
+
+    // Invalidate caches
+    try {
+      if (appointment.doctor) {
+        await redisService.del(`doctor:dashboard:${appointment.doctor}`);
+        await redisService.del(`doctor:dashboard:stats:${appointment.doctor}`);
+      }
+      if (appointment.hospital) {
+        await redisService.del(`helpdesk:dashboard:stats:${appointment.hospital}`);
+      }
+    } catch (e) {}
+
+    // Realtime Socket broadcast
+    try {
+      const io = (req as any).io;
+      if (io) {
+        io.to(`hospital_${appointment.hospital}`).emit("dashboard:update", {
+          appointmentId: appointment._id,
+        });
+        io.to(`hospital_${appointment.hospital}`).emit("appointment:updated", appointment);
+      }
+    } catch (e) {}
+
+    return res.json({
+      success: true,
+      message: "Appointment updated successfully",
+      appointment,
+    });
+  }
+);
+
+export const checkInAppointment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { paymentMode, paymentStatus, amountPaid, paymentDetails } = req.body;
+
+    const appointment = await (Appointment.findById(id) as any).unscoped();
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: "Appointment not found" });
+    }
+
+    const rawMode = (paymentMode || "cash").toLowerCase();
+    const isFree = rawMode === "unpaid" || rawMode === "exempt" || rawMode === "free";
+    const finalPaidAmount = isFree ? 0 : Number(amountPaid ?? appointment.fee ?? appointment.amount ?? 0);
+    const finalStatus = isFree ? "exempt" : "paid";
+
+    appointment.status = "confirmed";
+    appointment.queue_status = "WAITING";
+    appointment.paymentStatus = finalStatus;
+    appointment.paymentMethod = isFree ? "free" : rawMode;
+    appointment.paymentMode = isFree ? "free" : rawMode;
+    appointment.amountPaid = finalPaidAmount;
+    if (finalPaidAmount > 0) {
+      appointment.amount = finalPaidAmount;
+    }
+
+    if (!appointment.payment) {
+      appointment.payment = {};
+    }
+    appointment.payment.paymentStatus = finalStatus;
+    appointment.payment.status = finalStatus;
+    appointment.payment.paymentMethod = isFree ? "free" : rawMode;
+    appointment.payment.paymentMode = isFree ? "free" : rawMode;
+    appointment.payment.amount = finalPaidAmount;
+    appointment.payment.fee = appointment.fee || finalPaidAmount;
+
+    if (paymentDetails) {
+      (appointment as any).paymentDetails = paymentDetails;
+      appointment.payment.paymentDetails = paymentDetails;
+    }
+
+    await appointment.save();
+
+    // Record or update Transaction in database so it appears in Transactions and reports
+    let recordedTransaction: any = null;
+    if (!isFree && finalPaidAmount > 0) {
+      try {
+        let existingTx = await (Transaction.findOne({ referenceId: appointment._id }) as any).unscoped();
+        if (!existingTx) {
+          const parsedDetails = paymentDetails || {
+            cash: rawMode === 'cash' ? finalPaidAmount : 0,
+            upi: rawMode === 'upi' ? finalPaidAmount : 0,
+            card: rawMode === 'card' ? finalPaidAmount : 0,
+            bankTransfer: (rawMode === 'bank_transfer' || rawMode === 'bank') ? finalPaidAmount : 0,
+          };
+          recordedTransaction = await Transaction.create({
+            hospital: appointment.hospital,
+            user: appointment.patient,
+            userModel: "Patient",
+            amount: finalPaidAmount,
+            type: "appointment_booking",
+            status: "completed",
+            referenceId: appointment._id,
+            date: new Date(),
+            paymentMode: rawMode === "mixed" ? "mixed" : (rawMode as any),
+            paymentDetails: parsedDetails,
+            transactionId: appointment.appointmentId || `APT-${Date.now()}`,
+            receiptNumber: appointment.appointmentId || `REC-${Date.now()}`,
+            patientType: "opd",
+          });
+        } else {
+          existingTx.status = "completed";
+          existingTx.amount = finalPaidAmount;
+          existingTx.paymentMode = rawMode === "mixed" ? "mixed" : (rawMode as any);
+          if (paymentDetails) existingTx.paymentDetails = paymentDetails;
+          await existingTx.save();
+          recordedTransaction = existingTx;
+        }
+      } catch (txErr) {
+        console.error("[CheckIn] Error creating transaction:", txErr);
+      }
+    }
+
+    // Invalidate doctor cache so doctor immediately receives patient in queue
+    try {
+      if (appointment.doctor) {
+        await redisService.del(`doctor:dashboard:${appointment.doctor}`);
+        await redisService.del(`doctor:dashboard:stats:${appointment.doctor}`);
+      }
+      if (appointment.hospital) {
+        await redisService.del(`helpdesk:dashboard:stats:${appointment.hospital}`);
+      }
+    } catch (e) {}
+
+    // Emit live socket event
+    try {
+      const io = (req as any).io;
+      if (io) {
+        io.to(`hospital_${appointment.hospital}`).emit("dashboard:update", {
+          appointmentId: appointment._id,
+          status: "confirmed",
+        });
+        io.to(`hospital_${appointment.hospital}`).emit("appointment:updated", appointment);
+      }
+    } catch (e) {}
+
+    return res.json({
+      success: true,
+      message: "Patient checked-in successfully. Placed in Doctor Queue.",
+      appointment,
+      transaction: recordedTransaction,
+    });
   }
 );
