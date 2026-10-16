@@ -1123,8 +1123,34 @@ export const bookPublicAppointment = async (req: Request, res: Response) => {
 
     const formattedDate = formatReadableDate(targetDate);
 
-    // Dynamic live digital web pass URL (opens high-speed responsive HTML pass on phone or desktop)
-    const publicWebUrl = process.env.PUBLIC_WEB_URL || process.env.FRONTEND_PUBLIC_URL || "http://localhost:3002";
+    // Dynamic live digital web pass URL (auto-detects live deployed frontend domain from request origin, referer, or client body)
+    let publicWebUrl = "";
+    if (req.body?.frontendUrl && typeof req.body.frontendUrl === "string" && req.body.frontendUrl.startsWith("http")) {
+      try {
+        publicWebUrl = new URL(req.body.frontendUrl).origin;
+      } catch (_) {}
+    }
+    if (!publicWebUrl && req.headers?.origin) {
+      publicWebUrl = req.headers.origin.toString().replace(/\/+$/, "");
+    }
+    if (!publicWebUrl && req.headers?.referer) {
+      try {
+        publicWebUrl = new URL(req.headers.referer as string).origin;
+      } catch (_) {}
+    }
+    if (!publicWebUrl) {
+      const envUrl = process.env.PUBLIC_WEB_URL || process.env.FRONTEND_PUBLIC_URL;
+      if (envUrl) {
+        publicWebUrl = envUrl.replace(/\/+$/, "");
+      } else if (process.env.FRONTEND_URL) {
+        const parts = process.env.FRONTEND_URL.split(",").map((u) => u.trim()).filter(Boolean);
+        const prod = parts.find((u) => !u.includes("localhost"));
+        publicWebUrl = prod || parts[0] || "http://localhost:3002";
+      } else {
+        publicWebUrl = "http://localhost:3002";
+      }
+    }
+
     const digitalPassUrl = `${publicWebUrl}/pass/${appointment.appointmentId || appointment._id}`;
 
     // Hidden WhatsApp trigger for native "... Read more" collapse right after Estimated Reporting Time
