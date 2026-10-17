@@ -19,6 +19,15 @@ router.get("/proxy-pdf/:reportId", proxyPDF);
 
 import { getIPDFinalBill } from "../Controllers/ipdFinalBillController.js";
 import { getOPDFinalBill } from "../Controllers/opdFinalBillController.js";
+import { searchMedicines } from "../../Doctor/Controllers/consultationController.js";
+import { saveDischargeSummary, getDischargeSummary } from "../Controllers/dischargeSummaryController.js";
+
+// Medicine Search (for Discharge Summary & Transaction Reports)
+router.get("/medicines/search", searchMedicines);
+
+// Dedicated Discharge Summary Database Model Routes
+router.post("/discharge-summary", saveDischargeSummary);
+router.get("/discharge-summary/patient/:patientId", getDischargeSummary);
 
 // Transaction Reports
 router.post("/transaction-reports", saveTransactionReport);

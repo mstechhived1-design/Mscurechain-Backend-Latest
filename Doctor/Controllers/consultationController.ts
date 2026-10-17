@@ -645,7 +645,7 @@ export const searchMedicines = async (
       DoctorProfile.findOne({ user: doctorId }) as any
     )?.unscoped();
 
-    const hospitalId = doctor?.hospital;
+    const hospitalId = doctor?.hospital || (req as any).hospitalId || (req as any).tenantId || req.user?.hospital || (req.query?.hospitalId as string);
 
     // 1. Search Pharmacy Inventory (Product)
     const productFilter: any = {
