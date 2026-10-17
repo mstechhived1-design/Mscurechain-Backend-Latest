@@ -13,6 +13,9 @@ export interface ITransactionReport extends Document {
   generatedBy: string;
   date: Date;
   isOPD?: boolean;
+  admission?: Types.ObjectId;
+  admissionId?: string;
+  templateFormat?: string;
   isEdited?: boolean;
   editReason?: string;
   editedAt?: Date;
@@ -49,6 +52,9 @@ const transactionReportSchema = new Schema<ITransactionReport>({
     default: Date.now,
   },
   isOPD: { type: Boolean },
+  admission: { type: mongoose.Schema.Types.ObjectId, ref: "IPDAdmission" },
+  admissionId: { type: String },
+  templateFormat: { type: String, default: "standard" },
   isEdited: { type: Boolean, default: false },
   editReason: { type: String },
   editedAt: { type: Date },
