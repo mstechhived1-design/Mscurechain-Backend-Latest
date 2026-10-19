@@ -308,7 +308,23 @@ export const getMasterHelpdeskAppointments = asyncHandler(
       let apps: any[] = [];
       let mobileApps: any[] = [];
 
-      if (channel === "online") {
+      if (channel === "online" || channel === "website") {
+        apps = await (Appointment.find({ ...query, type: "online" }) as any)
+          .unscoped()
+          .sort({ date: sortOrder, createdAt: sortOrder })
+          .skip(skip)
+          .limit(limit)
+          .populate({
+            path: "patient",
+            select: "name mobile email mrn age gender",
+            options: { unscoped: true },
+          })
+          .populate({
+            path: "doctor",
+            populate: { path: "user", select: "name" },
+          })
+          .lean();
+      } else if (channel === "app") {
         mobileApps = await fetchMobile();
       } else if (channel === "offline") {
         apps = await fetchApps();
@@ -328,8 +344,8 @@ export const getMasterHelpdeskAppointments = asyncHandler(
 
       // 2. Normalization & Combination
       const combined: any[] = [
-        ...apps,
-        ...mobileApps.map((m) => ({ ...m, isOnline: true })),
+        ...apps.map((a) => ({ ...a, isMobile: false, bookingChannel: a.type === 'online' ? 'website' : 'offline' })),
+        ...mobileApps.map((m) => ({ ...m, isOnline: true, isMobile: true, bookingChannel: 'app', source: 'app' })),
       ].sort((a: any, b: any) => {
         const dateA = new Date(a.date).getTime();
         const dateB = new Date(b.date).getTime();
@@ -342,6 +358,7 @@ export const getMasterHelpdeskAppointments = asyncHandler(
         console.log("[MasterHelpdesk] First item in combined:", {
           _id: combined[0]._id,
           isOnline: combined[0].isOnline,
+          isMobile: combined[0].isMobile,
           patient: combined[0].patient,
           patients: combined[0].patients,
           mrn: combined[0].mrn,
@@ -351,21 +368,26 @@ export const getMasterHelpdeskAppointments = asyncHandler(
       let total = 0;
       let onlineCount = 0;
       let offlineCount = 0;
+      let appCount = 0;
 
       // Always fetch counts for all channels to populate filter buttons
-      const [allOffline, allOnline] = await Promise.all([
-        Appointment.countDocuments(query),
+      const [allOffline, allOnline, allApp] = await Promise.all([
+        Appointment.countDocuments({ ...query, type: { $ne: "online" } }),
+        Appointment.countDocuments({ ...query, type: "online" }),
         MobileAppointment.countDocuments(query),
       ]);
-      onlineCount = allOnline;
       offlineCount = allOffline;
+      onlineCount = allOnline;
+      appCount = allApp;
 
-      if (channel === "online") {
+      if (channel === "online" || channel === "website") {
         total = onlineCount;
+      } else if (channel === "app") {
+        total = appCount;
       } else if (channel === "offline") {
         total = offlineCount;
       } else {
-        total = onlineCount + offlineCount;
+        total = onlineCount + offlineCount + appCount;
       }
 
       // 3. High-Fidelity Demographic Mapping
@@ -549,7 +571,23 @@ export const getHelpdeskAppointments = asyncHandler(
       let apps: any[] = [];
       let mobileApps: any[] = [];
 
-      if (channel === "online") {
+      if (channel === "online" || channel === "website") {
+        apps = await (Appointment.find({ ...query, type: "online" }) as any)
+          .unscoped()
+          .sort({ date: sortOrder, createdAt: sortOrder })
+          .skip(skip)
+          .limit(limit)
+          .populate({
+            path: "patient",
+            select: "name mobile email mrn age gender",
+            options: { unscoped: true },
+          })
+          .populate({
+            path: "doctor",
+            populate: { path: "user", select: "name" },
+          })
+          .lean();
+      } else if (channel === "app") {
         // Mobile Appointment linkage for local hospital
         const mobileProfileIds = await (
           PatientProfile.find({ hospital: hospitalId }) as any
@@ -567,9 +605,13 @@ export const getHelpdeskAppointments = asyncHandler(
           .skip(skip)
           .limit(limit)
           .populate({ path: "patient", populate: { path: "user" } })
+          .populate({
+            path: "doctor",
+            populate: { path: "user", select: "name" },
+          })
           .lean();
       } else if (channel === "offline") {
-        apps = await (Appointment.find(query) as any)
+        apps = await (Appointment.find({ ...query, type: { $ne: "online" } }) as any)
           .unscoped()
           .sort({ date: sortOrder, createdAt: sortOrder })
           .skip(skip)
@@ -619,6 +661,10 @@ export const getHelpdeskAppointments = asyncHandler(
             .skip(skip)
             .limit(limit)
             .populate({ path: "patient", populate: { path: "user" } })
+            .populate({
+              path: "doctor",
+              populate: { path: "user", select: "name" },
+            })
             .lean(),
         ]);
         apps = results[0];
@@ -626,8 +672,8 @@ export const getHelpdeskAppointments = asyncHandler(
       }
 
       const combined: any[] = [
-        ...apps,
-        ...mobileApps.map((m) => ({ ...m, isOnline: true })),
+        ...apps.map((a) => ({ ...a, isMobile: false, bookingChannel: a.type === 'online' ? 'website' : 'offline' })),
+        ...mobileApps.map((m) => ({ ...m, isOnline: true, isMobile: true, bookingChannel: 'app', source: 'app' })),
       ].sort((a: any, b: any) =>
         sortOrder === 1
           ? new Date(a.date).getTime() - new Date(b.date).getTime()
@@ -637,10 +683,12 @@ export const getHelpdeskAppointments = asyncHandler(
       let total = 0;
       let onlineCount = 0;
       let offlineCount = 0;
+      let appCount = 0;
 
       // Local stats check
-      const [allOffline, allOnline] = await Promise.all([
-        Appointment.countDocuments(query),
+      const [allOffline, allOnline, allApp] = await Promise.all([
+        Appointment.countDocuments({ ...query, type: { $ne: "online" } }),
+        Appointment.countDocuments({ ...query, type: "online" }),
         MobileAppointment.countDocuments({
           ...query,
           patient: { $exists: true },
@@ -648,13 +696,16 @@ export const getHelpdeskAppointments = asyncHandler(
       ]);
       onlineCount = allOnline;
       offlineCount = allOffline;
+      appCount = allApp;
 
-      if (channel === "online") {
+      if (channel === "online" || channel === "website") {
         total = onlineCount;
+      } else if (channel === "app") {
+        total = appCount;
       } else if (channel === "offline") {
         total = offlineCount;
       } else {
-        total = onlineCount + offlineCount;
+        total = onlineCount + offlineCount + appCount;
       }
 
       const enriched = await Promise.all(
@@ -776,6 +827,9 @@ export const getHelpdeskAppointments = asyncHandler(
             patientMobile: pMobile,
             age,
             gender,
+            // Map consultationFee → fee so frontend displays correct amount for mobile app appointments
+            fee: app.fee || app.consultationFee || app.amount || 0,
+            amount: app.amount || app.consultationFee || app.fee || 0,
             patient: {
               _id: pId,
               name: pName,
@@ -803,6 +857,9 @@ export const getHelpdeskAppointments = asyncHandler(
         data: enriched,
         pagination: {
           total,
+          onlineCount,
+          offlineCount,
+          appCount,
           page,
           limit,
           totalPages: Math.ceil(total / limit),

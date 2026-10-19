@@ -2809,39 +2809,54 @@ export const checkInAppointment = asyncHandler(
     const { id } = req.params;
     const { paymentMode, paymentStatus, amountPaid, paymentDetails } = req.body;
 
-    const appointment = await (Appointment.findById(id) as any).unscoped();
+    let appointment: any = await (Appointment.findById(id) as any).unscoped();
+    let isMobileModel = false;
+    if (!appointment) {
+      appointment = await (MobileAppointment.findById(id) as any).unscoped();
+      if (appointment) {
+        isMobileModel = true;
+      }
+    }
     if (!appointment) {
       return res.status(404).json({ success: false, message: "Appointment not found" });
     }
 
     const rawMode = (paymentMode || "cash").toLowerCase();
     const isFree = rawMode === "unpaid" || rawMode === "exempt" || rawMode === "free";
-    const finalPaidAmount = isFree ? 0 : Number(amountPaid ?? appointment.fee ?? appointment.amount ?? 0);
-    const finalStatus = isFree ? "exempt" : "paid";
+    const finalPaidAmount = isFree ? 0 : Number(amountPaid ?? appointment.consultationFee ?? appointment.fee ?? appointment.amount ?? 0);
 
-    appointment.status = "confirmed";
-    appointment.queue_status = "WAITING";
-    appointment.paymentStatus = finalStatus;
-    appointment.paymentMethod = isFree ? "free" : rawMode;
-    appointment.paymentMode = isFree ? "free" : rawMode;
-    appointment.amountPaid = finalPaidAmount;
-    if (finalPaidAmount > 0) {
-      appointment.amount = finalPaidAmount;
-    }
+    if (isMobileModel) {
+      // MobileAppointment enums are Title-cased: "Confirmed", "Arrived", "Paid", "Pending"
+      appointment.status = "Arrived";           // Mark as arrived / in queue
+      appointment.paymentStatus = isFree ? "Pending" : "Paid";
+      appointment.paymentMethod = isFree ? "free" : rawMode;
+    } else {
+      // Regular Appointment enums are lowercase: "confirmed", "paid", "exempt"
+      const finalStatus = isFree ? "exempt" : "paid";
+      appointment.status = "confirmed";
+      appointment.queue_status = "WAITING";
+      appointment.paymentStatus = finalStatus;
+      appointment.paymentMethod = isFree ? "free" : rawMode;
+      appointment.paymentMode = isFree ? "free" : rawMode;
+      appointment.amountPaid = finalPaidAmount;
+      if (finalPaidAmount > 0) {
+        appointment.amount = finalPaidAmount;
+      }
 
-    if (!appointment.payment) {
-      appointment.payment = {};
-    }
-    appointment.payment.paymentStatus = finalStatus;
-    appointment.payment.status = finalStatus;
-    appointment.payment.paymentMethod = isFree ? "free" : rawMode;
-    appointment.payment.paymentMode = isFree ? "free" : rawMode;
-    appointment.payment.amount = finalPaidAmount;
-    appointment.payment.fee = appointment.fee || finalPaidAmount;
+      if (!appointment.payment) {
+        appointment.payment = {};
+      }
+      appointment.payment.paymentStatus = finalStatus;
+      appointment.payment.status = finalStatus;
+      appointment.payment.paymentMethod = isFree ? "free" : rawMode;
+      appointment.payment.paymentMode = isFree ? "free" : rawMode;
+      appointment.payment.amount = finalPaidAmount;
+      appointment.payment.fee = appointment.fee || finalPaidAmount;
 
-    if (paymentDetails) {
-      (appointment as any).paymentDetails = paymentDetails;
-      appointment.payment.paymentDetails = paymentDetails;
+      if (paymentDetails) {
+        (appointment as any).paymentDetails = paymentDetails;
+        appointment.payment.paymentDetails = paymentDetails;
+      }
     }
 
     await appointment.save();

@@ -29,6 +29,7 @@ import redisService from "../../config/redis.js";
 import { uploadToCloudinary } from "../../utils/uploadToCloudinary.js";
 import { decryptObject } from "../../utils/crypto.js";
 import LabOrder from "../../Lab/Models/LabOrder.js";
+import MobileAppointment from "../../Appointment/Models/MobileAppointment.js";
 
 export const getDoctorProfile = async (req: Request, res: Response) => {
   (req as any).markStage?.("getProfile-start");
@@ -147,13 +148,12 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const [todayAppointments, recentAppointments] = await Promise.all([
+    const [offlineAppointments, mobileArrivedAppointments, recentAppointments] = await Promise.all([
       (
         Appointment.find({
-          doctor: doctorProfile._id,
+          doctor: { $in: [doctorProfile._id, docReq.user._id] },
           // ✅ CRITICAL FIX: Include ALL active/booked statuses.
-          // ✅ Online appointments MUST be checked-in ('confirmed' / 'waiting') to enter doctor queue!
-          // Walk-in / offline can be Booked, pending, confirmed, in-progress, waiting
+          // Walk-in / offline can be Booked, pending, confirmed, in-progress, waiting, arrived
           $or: [
             {
               type: { $ne: "online" },
@@ -161,9 +161,15 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
                 $in: [
                   "pending",
                   "confirmed",
+                  "Confirmed",
                   "in-progress",
+                  "In-Progress",
                   "Booked",
+                  "booked",
                   "waiting",
+                  "Waiting",
+                  "arrived",
+                  "Arrived",
                 ],
               },
             },
@@ -172,19 +178,22 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
               status: {
                 $in: [
                   "confirmed",
+                  "Confirmed",
                   "in-progress",
+                  "In-Progress",
                   "waiting",
+                  "Waiting",
                   "arrived",
+                  "Arrived",
                 ],
               },
             },
           ],
-          status: { $ne: "cancelled" },
+          status: { $nin: ["cancelled", "Cancelled", "completed", "Completed"] },
           isPaused: { $ne: true },
         }) as any
       )
         .unscoped()
-        // ✅ FIX: Explicitly specify model to avoid resolution issues
         .populate({
           path: "patient",
           select: "name mobile email",
@@ -195,20 +204,66 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
         .select(
           "patient hospital date appointmentTime startTime type status queue_status token_number token appointmentId paymentStatus fee amount patientDetails reason createdAt mrn",
         )
-        .limit(300) // ✅ FIX: Increased limit from 50 to 300
+        .limit(300)
         .lean(),
-      (Appointment.find({ doctor: doctorProfile._id }) as any)
+      // ✅ Also fetch MobileAppointment records that are active/checked-in
+      (MobileAppointment.find({
+        doctor: { $in: [doctorProfile._id, docReq.user._id] },
+        status: { $nin: ["Cancelled", "cancelled", "Completed", "completed"] },
+      }) as any)
+        .unscoped()
+        .populate({ path: "patient", populate: { path: "user", select: "name mobile email" } })
+        .populate({ path: "doctor", populate: { path: "user", select: "name" } })
+        .sort({ date: 1, createdAt: 1 })
+        .lean(),
+      (Appointment.find({ doctor: { $in: [doctorProfile._id, docReq.user._id] } }) as any)
         .unscoped()
         .populate({
           path: "patient",
           select: "name mobile email _id mrn",
           model: "Patient",
         })
-        .select("patient date mrn") // Minimal fields for recent patients
+        .select("patient date mrn")
         .sort({ date: -1 })
         .limit(15)
         .lean(),
     ]);
+
+    // Normalize MobileAppointment records to match regular Appointment structure
+    const normalizedMobileAppts = (mobileArrivedAppointments || []).map((m: any, idx: number) => ({
+      _id: m._id,
+      id: m._id?.toString(),
+      appointmentId: m.appointmentId,
+      token_number: m.token_number || m.token || (idx + 1),
+      patient: {
+        _id: m.patient?.user?._id || m.patient?.user || m.patient?._id,
+        name: m.patient?.user?.name || m.patient?.name || "Unknown",
+        mobile: m.patient?.user?.mobile || m.patient?.mobile || "N/A",
+        email: m.patient?.user?.email || m.patient?.email || "",
+      },
+      patientName: m.patient?.user?.name || m.patient?.name || "Unknown",
+      mrn: m.mrn || m.patient?.mrn || "N/A",
+      date: m.date,
+      appointmentTime: m.startTime,
+      startTime: m.startTime,
+      time: m.startTime,
+      type: m.mode === "online" ? "online" : "opd", // Must be "opd" for doctor OPD queue view
+      appointmentType: m.appointmentType || "OPD",
+      visitType: "OPD",
+      status: m.status?.toLowerCase() === "arrived" ? "arrived" : (m.status?.toLowerCase() || "confirmed"),
+      queue_status: "WAITING",
+      paymentStatus: (m.paymentStatus === "Paid" || m.paymentStatus === "paid") ? "paid" : "pending",
+      fee: m.consultationFee || 0,
+      amount: m.consultationFee || 0,
+      createdAt: m.createdAt,
+      isMobile: true,
+      bookingChannel: "app",
+      source: "app",
+    }));
+
+    // Merge both lists, sort by date/time
+    const todayAppointments = [...offlineAppointments, ...normalizedMobileAppts]
+      .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const recentPatientsMap = new Map();
     recentAppointments.forEach((apt: any) => {

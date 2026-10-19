@@ -1102,3 +1102,48 @@ export const deleteInvoice = async (req: PharmaRequest, res: Response) => {
     session.endSession();
   }
 };
+
+export const updateInvoicePatient = async (req: PharmaRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const {
+      patientName,
+      customerPhone,
+      patientAddress,
+      patientType,
+      doctorName,
+      mrn,
+      honorific,
+    } = req.body;
+
+    const invoice = await PharmaInvoice.findById(id);
+    if (!invoice) {
+      return res.status(404).json({ success: false, message: "Invoice not found" });
+    }
+
+    if (patientName !== undefined) invoice.patientName = String(patientName).trim();
+    if (customerPhone !== undefined) invoice.customerPhone = String(customerPhone).trim();
+    if (patientAddress !== undefined) invoice.patientAddress = String(patientAddress).trim();
+    if (patientType !== undefined) invoice.patientType = String(patientType).trim();
+    if (doctorName !== undefined) invoice.doctorName = String(doctorName).trim();
+    if (mrn !== undefined) invoice.mrn = String(mrn).trim();
+    if (honorific !== undefined) invoice.honorific = String(honorific).trim();
+
+    invoice.isEdited = true;
+    invoice.editedAt = new Date();
+    if (req.user?._id) {
+      invoice.editedBy = req.user._id;
+    }
+
+    await invoice.save();
+
+    return res.json({
+      success: true,
+      message: "Patient details updated successfully",
+      data: invoice,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
