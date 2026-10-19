@@ -27,6 +27,7 @@ import {
   exportInvoicesToExcel,
   deleteInvoice,
   returnInvoiceItems,
+  updateInvoicePatient,
 } from "../Controllers/invoiceController.js";
 import {
   getSuppliers,
@@ -340,6 +341,8 @@ router.get("/invoices/export", exportInvoicesToExcel);
 router.get("/invoices", getInvoices);
 router.get("/invoices/:id", getInvoiceById);
 router.post("/invoices", createInvoice);
+router.put("/invoices/:id/patient", updateInvoicePatient);
+router.put("/invoices/:id", updateInvoicePatient);
 router.post("/invoices/:id/return", returnInvoiceItems);
 router.delete("/invoices/:id", deleteInvoice);
 
