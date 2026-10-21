@@ -751,6 +751,11 @@ export const pauseConsultation = async (
     appointment.pausedAt = new Date();
     await appointment.save();
 
+    const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
+    if ((req as any).io) {
+      await emitQueueUpdate((req as any).io, appointment.doctor, appointment.hospital);
+    }
+
     res.json({
       success: true,
       message: "Consultation paused successfully",
@@ -793,8 +798,14 @@ export const resumeConsultation = async (
 
     // Resume consultation
     appointment.isPaused = false;
+    appointment.pausedAt = null;
     appointment.resumedAt = new Date();
     await appointment.save();
+
+    const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
+    if ((req as any).io) {
+      await emitQueueUpdate((req as any).io, appointment.doctor, appointment.hospital);
+    }
 
     res.json({
       success: true,

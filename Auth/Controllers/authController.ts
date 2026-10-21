@@ -21,6 +21,7 @@ import { logAudit, logError } from "../../utils/logger.js";
 import DoctorProfile from "../../Doctor/Models/DoctorProfile.js";
 import { uploadToCloudinary } from "../../utils/uploadToCloudinary.js";
 import { emitSSE } from "../../utils/ssePublisher.js";
+import sendEmail from "../../utils/sendEmail.js";
 
 // ─── SECURITY CONSTANTS (from .env) ──────────────────────────────────────────
 const BCRYPT_SALT_ROUNDS = parseInt(process.env.BCRYPT_SALT_ROUNDS || "12", 10);
@@ -1350,5 +1351,139 @@ export const verifyHospital = async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error("[verifyHospital] Error:", err);
     return res.status(500).json({ valid: false, message: "Server error during verification" });
+  }
+};
+
+/**
+ * @route POST /api/auth/forgot-password
+ * @desc Check if email/mobile exists, generate 6-digit OTP, send email OTP
+ */
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawId = (req.body.identifier || req.body.email || req.body.mobile || "").trim();
+    if (!rawId) {
+      res.status(400).json({ success: false, message: "Please provide your registered email or mobile number." });
+      return;
+    }
+
+    const isEmail = rawId.includes("@");
+    let query: any = {};
+    if (isEmail) {
+      query = { email: rawId.toLowerCase() };
+    } else {
+      const cleanDigits = rawId.replace(/[^0-9]/g, "").slice(-10);
+      query = { $or: [{ mobile: cleanDigits }, { mobile: `+91${cleanDigits}` }] };
+    }
+
+    const user = (await (Patient.findOne(query) as any).unscoped()) || (await (User.findOne(query) as any).unscoped());
+    if (!user) {
+      res.status(404).json({ success: false, message: "No account found with this email or mobile number." });
+      return;
+    }
+
+    if (!user.email) {
+      res.status(400).json({ success: false, message: "This account does not have a registered email address. Please contact hospital support." });
+      return;
+    }
+
+    // Generate random 6-digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const salt = await bcrypt.genSalt(10);
+    const hashedOtp = await bcrypt.hash(otp, salt);
+
+    user.resetPasswordToken = hashedOtp;
+    user.resetPasswordExpire = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+    await user.save();
+
+    // Send email using Nodemailer
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; max-width: 500px; margin: auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px;">
+        <h2 style="color: #005AB5; text-align: center;">MS CureChain</h2>
+        <p>Dear ${user.name || "Patient"},</p>
+        <p>You recently requested to reset your password. Use the verification code below to complete the process:</p>
+        <div style="background-color: #f0f7ff; padding: 15px; text-align: center; border-radius: 8px; margin: 20px 0;">
+          <span style="font-size: 28px; font-weight: bold; letter-spacing: 6px; color: #005AB5;">${otp}</span>
+        </div>
+        <p style="color: #666; font-size: 13px;">This OTP is valid for <strong>10 minutes</strong>. If you did not request this, please ignore this email or contact your hospital support immediately.</p>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
+        <p style="font-size: 11px; color: #999; text-align: center;">MS CureChain Healthcare • Digital Health Platform</p>
+      </div>
+    `;
+
+    await sendEmail(user.email, "Your MS CureChain Password Reset Verification Code", htmlContent);
+
+    const emailParts = user.email.split("@");
+    const maskedEmail = emailParts[0].slice(0, 2) + "***@" + emailParts[1];
+
+    res.status(200).json({
+      success: true,
+      message: `Verification code sent to ${maskedEmail}.`,
+      email: user.email,
+    });
+  } catch (error: any) {
+    console.error("Forgot Password Error:", error);
+    res.status(500).json({ success: false, message: error?.message || "Failed to send reset instructions." });
+  }
+};
+
+/**
+ * @route POST /api/auth/reset-password
+ * @desc Verify OTP and update password
+ */
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawId = (req.body.identifier || req.body.email || req.body.mobile || "").trim();
+    const otp = (req.body.otp || "").trim();
+    const newPassword = req.body.newPassword;
+
+    if (!rawId || !otp || !newPassword) {
+      res.status(400).json({ success: false, message: "Please provide email/mobile, OTP, and new password." });
+      return;
+    }
+
+    if (newPassword.length < 8 || newPassword.length > 10) {
+      res.status(400).json({ success: false, message: "Password must be between 8 and 10 characters long." });
+      return;
+    }
+
+    const isEmail = rawId.includes("@");
+    let query: any = {};
+    if (isEmail) {
+      query = { email: rawId.toLowerCase() };
+    } else {
+      const cleanDigits = rawId.replace(/[^0-9]/g, "").slice(-10);
+      query = { $or: [{ mobile: cleanDigits }, { mobile: `+91${cleanDigits}` }] };
+    }
+
+    const user = (await (Patient.findOne(query) as any).unscoped()) || (await (User.findOne(query) as any).unscoped());
+    if (!user || !user.resetPasswordToken || !user.resetPasswordExpire) {
+      res.status(400).json({ success: false, message: "Invalid or expired reset request. Please request a new code." });
+      return;
+    }
+
+    if (new Date() > new Date(user.resetPasswordExpire)) {
+      res.status(400).json({ success: false, message: "Verification code has expired. Please request a new code." });
+      return;
+    }
+
+    const isMatch = await bcrypt.compare(otp, user.resetPasswordToken);
+    if (!isMatch) {
+      res.status(400).json({ success: false, message: "Incorrect verification code. Please check and try again." });
+      return;
+    }
+
+    const salt = await bcrypt.genSalt(BCRYPT_SALT_ROUNDS);
+    user.password = await bcrypt.hash(newPassword, salt);
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpire = undefined;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Password has been successfully reset! You can now log in.",
+    });
+  } catch (error: any) {
+    console.error("Reset Password Error:", error);
+    res.status(500).json({ success: false, message: error?.message || "Failed to reset password." });
   }
 };

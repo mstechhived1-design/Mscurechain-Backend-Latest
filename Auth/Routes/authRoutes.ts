@@ -13,6 +13,8 @@ import {
   labLogin,
   pharmaLogin,
   verifyHospital,
+  forgotPassword,
+  resetPassword,
 } from "../Controllers/authController.js";
 import {
   verifySuperAdminOtp,
@@ -38,6 +40,8 @@ const router = express.Router();
 // ─── Public Auth Endpoints ───────────────────────────────────────────────────
 router.post("/check-existence", checkExistence);
 router.post("/register", registerValidator, register);
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 
 // ✅ MULTI-TAB LOGIN: Hospital verification step (pre-login, no auth required)
 // Frontend calls this in Step 1 before asking for user credentials.

@@ -10,7 +10,8 @@ import {
   verifyRazorpayPayment,
   renderCheckoutPage,
   checkFollowUpEligibility,
-  changeAppointmentDoctor
+  changeAppointmentDoctor,
+  getLiveAppointmentQueue,
 } from "../Controllers/bookingController.js";
 import { protect } from "../../middleware/Auth/authMiddleware.js";
 import { authorizeRoles } from "../../middleware/Auth/roleMiddleware.js";
@@ -42,6 +43,13 @@ router.get(
 );
 router.post("/create-order", authorizeRoles("patient"), createRazorpayOrder);
 router.post("/verify-payment", authorizeRoles("patient"), verifyRazorpayPayment);
+
+// ── Real-Time Dynamic OPD Queue & Token Tracker Route ──
+router.get(
+  "/live-queue/:appointmentId",
+  authorizeRoles("patient", "doctor", "helpdesk", "hospital-admin", "nurse", "masterhelpdesk"),
+  getLiveAppointmentQueue,
+);
 
 // Explicit Tenant Required for staff/admin operations
 router.use(requireTenant);
