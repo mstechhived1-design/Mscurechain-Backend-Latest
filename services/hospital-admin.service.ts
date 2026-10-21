@@ -1232,8 +1232,8 @@ export class HospitalAdminService {
                 },
                 patientName: {
                   $ifNull: [
-                    "$patientName",
                     "$patientLookup.name",
+                    "$patientName",
                     "Unknown Patient",
                   ],
                 },
@@ -1312,6 +1312,14 @@ export class HospitalAdminService {
             },
             {
               $lookup: {
+                from: "users",
+                localField: "patient",
+                foreignField: "_id",
+                as: "userLookup",
+              },
+            },
+            {
+              $lookup: {
                 from: "patientprofiles",
                 localField: "patient",
                 foreignField: "user",
@@ -1350,8 +1358,10 @@ export class HospitalAdminService {
                 primaryDoctor: "$doctor",
                 patientName: {
                   $ifNull: [
-                    "$patientDetails.name",
                     { $arrayElemAt: ["$patientLookup.name", 0] },
+                    { $arrayElemAt: ["$userLookup.name", 0] },
+                    { $arrayElemAt: ["$profileLookup.name", 0] },
+                    "$patientDetails.name",
                     "$patientName",
                     "Unknown Patient",
                   ],
@@ -2039,9 +2049,22 @@ export class HospitalAdminService {
                 },
                 patientName: {
                   $ifNull: [
+                    {
+                      $cond: {
+                        if: {
+                          $and: [
+                            { $ne: ["$user.name", null] },
+                            { $ne: ["$user.name", ""] },
+                            { $ne: ["$user.name", "Unknown"] },
+                            { $ne: ["$user.name", "Unknown Patient"] }
+                          ]
+                        },
+                        then: "$user.name",
+                        else: null
+                      }
+                    },
                     "$patientName",
                     "$referenceId.patientName",
-                    "$user.name",
                     "Unknown Patient",
                   ],
                 },

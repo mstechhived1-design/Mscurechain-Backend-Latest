@@ -2932,3 +2932,155 @@ export const checkInAppointment = asyncHandler(
     });
   }
 );
+
+/**
+ * GET /api/bookings/live-queue/:appointmentId
+ * Real-time dynamic queue & token status for the patient's specific doctor queue
+ */
+export const getLiveAppointmentQueue = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { appointmentId } = req.params;
+
+    const appointment = await (Appointment.findById(appointmentId) as any)
+      .unscoped()
+      .populate({
+        path: "doctor",
+        model: "DoctorProfile",
+        options: { unscoped: true },
+        populate: {
+          path: "user",
+          model: "User",
+          select: "name email mobile",
+          options: { unscoped: true },
+        },
+      })
+      .populate("hospital", "name address logo");
+
+    if (!appointment) {
+      return res.status(404).json({ success: false, message: "Appointment not found" });
+    }
+
+    const doctorProfile = appointment.doctor;
+    const doctorId = doctorProfile?._id || appointment.doctor;
+
+    const apptDate = new Date(appointment.date);
+    const startOfDay = new Date(apptDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(apptDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const dayAppointments = await (Appointment.find({
+      doctor: doctorId,
+      date: { $gte: startOfDay, $lte: endOfDay },
+      status: { $nin: ["cancelled", "Cancelled"] },
+    }) as any)
+      .unscoped()
+      .select("_id appointmentTime startTime token_number queue_status status patient createdAt called_time consultationStartTime consultationEndTime consultationDuration pausedDuration isPaused pausedAt")
+      .sort({ token_number: 1, startTime: 1, appointmentTime: 1, createdAt: 1 })
+      .lean();
+
+    const currentApt = dayAppointments.find((a: any) =>
+      a.status === "in-progress" || a.queue_status === "CURRENT"
+    );
+
+    const completedCount = dayAppointments.filter((a: any) =>
+      ["completed", "Completed"].includes(a.status) || a.queue_status === "COMPLETED"
+    ).length;
+
+    const isCompleted = ["completed", "Completed"].includes(appointment.status) || appointment.queue_status === "COMPLETED";
+    const isCurrentPatient = currentApt ? (currentApt._id.toString() === appointment._id.toString()) : false;
+
+    const waitingApts = dayAppointments.filter((a: any) =>
+      !["completed", "Completed", "cancelled", "Cancelled"].includes(a.status) &&
+      a.queue_status !== "COMPLETED" &&
+      (!currentApt || a._id.toString() !== currentApt._id.toString())
+    );
+
+    let patientsAhead = 0;
+    const thisIndex = waitingApts.findIndex(
+      (a: any) => a._id.toString() === appointment._id.toString()
+    );
+
+    if (isCompleted || isCurrentPatient) {
+      patientsAhead = 0;
+    } else if (thisIndex !== -1) {
+      // Patients ahead in queue + 1 if doctor is currently consulting another patient
+      patientsAhead = thisIndex + (currentApt ? 1 : 0);
+    } else {
+      const apptTokenNum = parseInt(appointment.token_number, 10);
+      const currentTokenNum = currentApt ? parseInt(currentApt.token_number, 10) : 0;
+      if (!isNaN(apptTokenNum) && !isNaN(currentTokenNum) && apptTokenNum > currentTokenNum) {
+        patientsAhead = apptTokenNum - currentTokenNum;
+      } else {
+        patientsAhead = 0;
+      }
+    }
+
+    let queueStatus = "WAITING";
+    if (isCompleted) {
+      queueStatus = "COMPLETED";
+    } else if (appointment.isPaused) {
+      queueStatus = "PAUSED";
+    } else if (isCurrentPatient || (!currentApt && (appointment.status === "in-progress" || appointment.queue_status === "CURRENT"))) {
+      if (currentApt?.isPaused) {
+        queueStatus = "PAUSED";
+      } else {
+        queueStatus = "IN_CONSULTATION";
+      }
+    } else if (patientsAhead <= 1) {
+      queueStatus = "NEXT";
+    } else {
+      queueStatus = "WAITING";
+    }
+
+    const avgMinutes = 6;
+    const estimatedWaitMinutes = patientsAhead * avgMinutes;
+
+    const rawName = (doctorProfile?.user as any)?.name;
+    const docName = rawName
+      ? (rawName.startsWith("Dr.") ? rawName : `Dr. ${rawName}`)
+      : "Attending Physician";
+
+    return res.json({
+      success: true,
+      appointmentId: appointment._id,
+      doctor: {
+        id: doctorId,
+        name: docName,
+        specialization: doctorProfile?.specialization || doctorProfile?.department || "General Medicine",
+        department: doctorProfile?.department || "OPD",
+        roomNumber: doctorProfile?.roomNumber || "Consultation Room 1",
+      },
+      hospital: {
+        id: appointment.hospital?._id || appointment.hospital,
+        name: appointment.hospital?.name || "Hospital",
+      },
+      patientToken: appointment.token_number || String(thisIndex >= 0 ? thisIndex + 1 : "1"),
+      currentlyServingToken: currentApt?.token_number || (dayAppointments.length > 0 ? "1" : "None"),
+      currentlyServingId: currentApt?._id || null,
+      queueStatus,
+      patientsAhead: Math.max(0, patientsAhead),
+      totalWaitingToday: waitingApts.length,
+      totalCompletedToday: completedCount,
+      totalInQueueToday: dayAppointments.length,
+      estimatedWaitMinutes,
+      averageMinutesPerPatient: avgMinutes,
+      appointmentTime: appointment.appointmentTime || appointment.startTime || "Scheduled Today",
+      calledTime: appointment.called_time || null,
+      consultationStartTime: appointment.consultationStartTime || appointment.called_time || null,
+      consultationEndTime: appointment.consultationEndTime || null,
+      consultationDuration: appointment.consultationDuration || 0,
+      currentServingStartTime: currentApt?.consultationStartTime || currentApt?.called_time || null,
+      currentServingEndTime: currentApt?.consultationEndTime || null,
+      currentServingDuration: currentApt?.consultationDuration || 0,
+      isPaused: Boolean(appointment.isPaused),
+      pausedAt: appointment.pausedAt || null,
+      pausedDuration: appointment.pausedDuration || 0,
+      currentServingIsPaused: Boolean(currentApt?.isPaused),
+      currentServingPausedAt: currentApt?.pausedAt || null,
+      currentServingPausedDuration: currentApt?.pausedDuration || 0,
+      lastUpdated: new Date().toISOString(),
+    });
+  }
+);
+

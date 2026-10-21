@@ -46,7 +46,7 @@ const sendEmail = async (to: string, subject: string, html: string): Promise<any
 
     try {
         const info = await transporter.sendMail({
-            from: process.env.EMAIL_FROM || process.env.EMAIL_USER_FINAL,
+            from: process.env.EMAIL_FROM || process.env.EMAIL_USER_FINAL || (emailUser ? `"MS CureChain" <${emailUser}>` : '"MS CureChain" <mscurechain@gmail.com>'),
             to,
             subject,
             html,

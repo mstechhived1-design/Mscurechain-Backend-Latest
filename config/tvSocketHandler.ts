@@ -136,7 +136,11 @@ export const emitQueueUpdate = async (ioOrSocket: Server | Socket, doctorId: mon
       currentPatient: currentAppointment ? {
         token: currentAppointment.token_number || "N/A",
         name: (currentAppointment.patient as any)?.name || "Patient",
-        time: currentAppointment.appointmentTime || currentAppointment.startTime || "N/A"
+        time: currentAppointment.appointmentTime || currentAppointment.startTime || "N/A",
+        consultationStartTime: currentAppointment.consultationStartTime || currentAppointment.called_time || null,
+        isPaused: Boolean(currentAppointment.isPaused),
+        pausedAt: currentAppointment.pausedAt || null,
+        pausedDuration: currentAppointment.pausedDuration || 0,
       } : null,
       nextPatient: nextAppointment ? {
         token: nextAppointment.token_number || "N/A",
@@ -148,6 +152,10 @@ export const emitQueueUpdate = async (ioOrSocket: Server | Socket, doctorId: mon
     if ('of' in ioOrSocket) {
       // It's a Server object
       ioOrSocket.of("/tv-display").to(`hospital_${hospitalId.toString()}`).emit("queue_update", payload);
+      // Also broadcast to standard namespace for patient mobile app real-time token tracking
+      ioOrSocket.to(`hospital_${hospitalId.toString()}`).emit("queue_update", payload);
+      ioOrSocket.emit("queue_update", payload);
+      ioOrSocket.emit(`queue_update_${doctorId.toString()}`, payload);
     } else {
       // It's a Socket object
       ioOrSocket.emit("queue_update", payload);
