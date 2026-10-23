@@ -118,10 +118,11 @@ export const resolveTenant = async (
   }
   // 2. ENFORCE GLOBAL ROLES (Flexible Access with Validation)
   else if (GLOBAL_ROLES.includes(role)) {
-    // Global users can access multiple hospitals via dynamic input
+    // Global users (such as patients booking at any hospital) can access multiple hospitals via dynamic input
     const requestedHospitalId = (req.query.hospitalId ||
       req.params.hospitalId ||
-      req.headers["x-hospital-id"]) as string;
+      req.headers["x-hospital-id"] ||
+      (req.body && (req.body.hospitalId || req.body.hospital))) as string;
 
     if (requestedHospitalId) {
       try {

@@ -24,6 +24,10 @@ const patientSchema = new Schema<IPatient>(
     age: { type: Number },
     ageUnit: { type: String, enum: ["Years", "Months", "Days"] },
     dateOfBirth: { type: Date },
+    dob: { type: String },
+    fatherName: { type: String },
+    GuardianName: { type: String },
+    guardianName: { type: String },
     
     // Global Clinical Data
     height: { type: Number },

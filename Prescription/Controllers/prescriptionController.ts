@@ -28,6 +28,7 @@ import GeneralSurgeryExamination from "../Models/GeneralSurgeryExamination.js";
 import RadiologyOrder from "../Models/RadiologyOrder.js";
 import RadiologyReport from "../Models/RadiologyReport.js";
 import Appointment from "../../Appointment/Models/Appointment.js";
+import MobileAppointment from "../../Appointment/Models/MobileAppointment.js";
 import IPDAdmission from "../../IPD/Models/IPDAdmission.js";
 import DoctorProfile from "../../Doctor/Models/DoctorProfile.js";
 import PharmacyToken from "../../Pharmacy/Models/PharmacyToken.js";
@@ -104,22 +105,37 @@ export const createPrescription = async (
 
     let patient: any, doctor: any, hospital: any;
     let appointment: any = null;
+    let isMobile = false;
+    let shouldComplete = false;
     let patientName = "Patient";
 
     if (appointmentId) {
       appointment = await (Appointment.findById(appointmentId) as any)
-        .unscoped()
-        .populate("patient", "name")
-        .session(session);
+        ?.unscoped()
+        ?.populate("patient", "name")
+        ?.session(session);
+
+      if (!appointment) {
+        appointment = await (MobileAppointment.findById(appointmentId) as any)
+          ?.unscoped()
+          ?.populate({
+            path: "patient",
+            options: { unscoped: true },
+            populate: { path: "user", options: { unscoped: true }, select: "name" },
+          })
+          ?.session(session);
+        if (appointment) isMobile = true;
+      }
+
       if (!appointment) {
         await session.abortTransaction();
         session.endSession();
         return res.status(404).json({ message: "Appointment not found" });
       }
-      patient = appointment.patient?._id || appointment.patient;
-      patientName = appointment.patient?.name || "Patient";
-      doctor = appointment.doctor;
-      hospital = appointment.hospital;
+      patient = appointment.patient?.user?._id || appointment.patient?._id || appointment.patient;
+      patientName = appointment.patient?.user?.name || appointment.patient?.name || "Patient";
+      doctor = appointment.doctor?._id || appointment.doctor;
+      hospital = appointment.hospital?._id || appointment.hospital;
     } else {
       // Direct prescription
       patient = req.body.patientId;
@@ -1273,10 +1289,30 @@ export const createPrescription = async (
       if (pharmacyTokenId) appointment.pharmacyToken = pharmacyTokenId;
       if (labTokenId) appointment.labToken = labTokenId;
 
-      // NOTE: Do NOT mark as completed here. The doctor will explicitly end the
-      // consultation from the consultation page (using the "Complete Session" button).
-      // Automatically completing here causes the timer and Pause button to freeze
-      // when the doctor navigates back to the consultation page after writing a prescription.
+      // Finalize appointment when doctor completes/finalizes prescription
+      shouldComplete = req.body.finalize === true || (!sendToPharma && req.body.finalize !== false);
+      if (shouldComplete) {
+        appointment.status = isMobile ? "Completed" : "completed";
+        appointment.queue_status = "COMPLETED";
+        appointment.isPaused = false;
+        appointment.consultationEndTime = new Date();
+        if (appointment.consultationStartTime) {
+          appointment.consultationDuration = Math.max(
+            0,
+            Math.round(
+              (appointment.consultationEndTime.getTime() - new Date(appointment.consultationStartTime).getTime()) / 1000
+            )
+          );
+        } else {
+          appointment.consultationDuration = appointment.consultationDuration || 0;
+        }
+        if (diagnosis) appointment.diagnosis = diagnosis;
+        if (symptoms) {
+          const symStr = Array.isArray(symptoms) ? symptoms.join(", ") : String(symptoms);
+          appointment.clinicalNotes = symStr;
+        }
+        console.log(`[CreatePrescription] Appointment ${appointment._id} marked as ${appointment.status}`);
+      }
 
       // Update snapshot
       if (age || gender) {
@@ -1425,6 +1461,76 @@ export const createPrescription = async (
       console.log("[CreatePrescription] Notifications sent to staff.");
     } catch (notifError) {
       console.error("[CreatePrescription] Notification Error:", notifError);
+    }
+
+    // --- Socket & Cache Updates on Consultation Completion ---
+    if (appointment && shouldComplete) {
+      try {
+        const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
+        const { getIO } = await import("../../config/socket.js");
+        const io = (req as any).io || getIO();
+        const docId = appointment.doctor?._id || appointment.doctor || doctor;
+        const hospId = appointment.hospital?._id || appointment.hospital || hospital;
+
+        if (io) {
+          await emitQueueUpdate(io, docId, hospId);
+        }
+
+        let doctorUserId: any = null;
+        try {
+          const docProfile = await DoctorProfile.findById(docId).select("user").lean();
+          doctorUserId = docProfile?.user || doctorId;
+        } catch (e) {
+          doctorUserId = doctorId;
+        }
+
+        const patientUserId = appointment.patient?.user?._id || appointment.patient?.user || appointment.patient?._id || appointment.patient || patient;
+
+        if (io) {
+          if (doctorUserId) {
+            io.to(`doctor_${doctorUserId}`).emit("dashboard:update", {
+              message: "Consultation completed",
+              appointmentId: appointment._id,
+            });
+          }
+
+          if (hospId) {
+            io.to(`hospital_${hospId}`).emit("dashboard:update", {
+              message: "Consultation completed",
+              appointmentId: appointment._id,
+            });
+          }
+
+          if (patientUserId) {
+            io.to(`patient_${patientUserId}`).emit("appointment_completed", {
+              appointmentId: appointment._id,
+              status: "completed",
+            });
+            io.to(`patient_${patientUserId}`).emit("appointment:status_change", {
+              appointmentId: appointment._id,
+              status: "completed",
+            });
+            io.to(`user_${patientUserId}`).emit("appointment_completed", {
+              appointmentId: appointment._id,
+              status: "completed",
+            });
+          }
+
+          io.emit("appointment_status_changed", {
+            appointmentId: appointment._id,
+            status: "completed",
+            doctorId: docId,
+            hospitalId: hospId,
+          });
+          io.emit("queue_update", { doctorId: docId, hospitalId: hospId });
+        }
+
+        if (doctorUserId) {
+          await redisService.del(`doctor:dashboard:${doctorUserId}`);
+        }
+      } catch (wsErr) {
+        console.warn("[CreatePrescription] Socket/cache completion notification error:", wsErr);
+      }
     }
 
     res.status(201).json({

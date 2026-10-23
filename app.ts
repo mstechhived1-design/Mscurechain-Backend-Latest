@@ -23,6 +23,7 @@ if (MISSING_ENV.length > 0) {
 // Route imports
 import authRoutes from "./Auth/Routes/authRoutes.js";
 import patientRoutes from "./Patient/Routes/patientRoutes.js";
+import receiptRoutes from "./Patient/Routes/receiptRoutes.js";
 import feedbackRoutes from "./Patient/Routes/feedbackRoutes.js";
 import doctorRoutes from "./Doctor/Routes/doctorRoutes.js";
 import consultationRoutes from "./Doctor/Routes/consultationRoutes.js";
@@ -467,6 +468,8 @@ app.use("/api/public", landingRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", authRoutes); // Matching frontend USER_ENDPOINTS
 app.use("/api/patients", patientRoutes);
+app.use("/api/patient/receipts", receiptRoutes);
+app.use("/api/receipts", receiptRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/doctors", doctorRoutes);
 app.use("/api/hospitals", hospitalRoutes);

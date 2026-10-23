@@ -1098,6 +1098,8 @@ export const bookPublicAppointment = async (req: Request, res: Response) => {
       status: "scheduled", // Staged in scheduled pool, never dumps into Dr's live WAITING queue!
       queue_status: "WAITING",
       type: "online",
+      bookingChannel: "website",
+      source: "online",
       mrn,
       honorific: honorific || "Mr.",
       appointmentHonorific: honorific || "Mr.",

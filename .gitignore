@@ -114,3 +114,12 @@ npm-debug.log*
 
 # Vercel
 .vercel
+
+# OCR data
+*.traineddata
+*.traineddata.gz
+
+# Scratch & ad-hoc debug files
+check_current_appt.cjs
+backup_*.json
+

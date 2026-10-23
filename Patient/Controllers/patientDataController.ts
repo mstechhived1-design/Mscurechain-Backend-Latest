@@ -9,6 +9,8 @@ import DischargeRecord from "../../Discharge/Models/DischargeRecord.js";
 import dischargeService from "../../services/discharge.service.js";
 import PharmacyToken from "../../Pharmacy/Models/PharmacyToken.js";
 import PharmacyOrder from "../../Pharmacy/Models/PharmacyOrder.js";
+import PharmaInvoice from "../../Pharmacy/Models/Invoice.js";
+import Product from "../../Pharmacy/Models/Product.js";
 import MedicationRecord from "../../IPD/Models/MedicationRecord.js";
 import { PatientRequest } from "../types/index.js";
 import patientService from "../../services/patient.service.js";
@@ -33,17 +35,31 @@ const normalizePharma = (items: any[]) => {
     const diagnosis =
       item.prescription?.diagnosis || item.diagnosis || typeLabel;
 
+    let itemAmount = Number(item.amount ?? item.totalAmount ?? item.netPayable ?? 0);
+    if (!itemAmount && Array.isArray(item.medicines)) {
+      itemAmount = item.medicines.reduce((sum: number, m: any) => {
+        return sum + (Number(m.amount || (Number(m.quantity || m.qty || 1) * Number(m.mrp || m.rate || 0))) || 0);
+      }, 0);
+    }
+
     return {
       _id: item._id,
       prescriptionDate: item.createdAt,
       diagnosis: diagnosis,
       displayType: typeLabel,
+      amount: itemAmount,
+      totalAmount: itemAmount,
+      paidAmount: Number(item.paidAmount ?? (paymentStatus === "PAID" ? itemAmount : 0)),
       medicines: (item.medicines || [])
         .map((med: any) => ({
           name: med.name,
           dosage: med.dosage || med.dose || "-",
           frequency: med.freq || med.frequency || "-",
           duration: med.duration || "-",
+          price: Number(med.rate || med.mrp || 0),
+          mrp: Number(med.mrp || med.rate || 0),
+          amount: Number(med.amount || (Number(med.quantity || med.qty || 1) * Number(med.mrp || med.rate || 0))),
+          quantity: med.quantity || med.qty,
           instructions: `${med.quantity ? `Qty: ${med.quantity}` : ""}${med.dosage ? ` | ${med.dosage}` : ""}${med.status ? ` | Status: ${med.status.toUpperCase()}` : ""} | ${status}${item.paymentStatus ? ` [${paymentStatus}]` : ""}`,
         }))
         .filter((m: any) => m.name), // Ensure medicine names are present
@@ -52,9 +68,49 @@ const normalizePharma = (items: any[]) => {
       appointment: item.appointment,
       tokenNumber: item.tokenNumber,
       status: item.status,
+      paymentStatus: item.paymentStatus,
       type: "pharma",
     };
   });
+};
+
+const normalizePharmaInvoices = (invoices: any[]) => {
+  return invoices.map((inv: any) => ({
+    _id: inv._id,
+    prescriptionDate: inv.createdAt,
+    createdAt: inv.createdAt,
+    diagnosis: inv.diagnosis || `Tax Invoice #${inv.invoiceNo}`,
+    displayType: "Pharmacy Invoice",
+    invoiceNo: inv.invoiceNo,
+    billType: inv.billType || "TAX_INVOICE",
+    mode: inv.mode,
+    amount: inv.netPayable || inv.paid || 0,
+    totalAmount: inv.netPayable || inv.paid || 0,
+    netPayable: inv.netPayable,
+    paid: inv.paid,
+    balance: inv.balance,
+    items: inv.items,
+    medicines: (inv.items || []).map((it: any) => ({
+      name: it.productName,
+      dosage: it.batchNo ? `Batch: ${it.batchNo}` : "-",
+      frequency: `Qty: ${it.qty}`,
+      duration: it.expiryDate ? `Exp: ${new Date(it.expiryDate).toLocaleDateString("en-IN")}` : "-",
+      instructions: `MRP: ₹${it.mrp || it.unitRate || 0} | Amount: ₹${it.amount}`,
+      quantity: it.qty,
+      price: it.unitRate || it.mrp || 0,
+      mrp: it.mrp || it.unitRate || 0,
+      amount: it.amount,
+      batchNumber: it.batchNo,
+      expiryDate: it.expiryDate,
+    })),
+    doctor: { name: inv.doctorName || "Attending Doctor" },
+    hospital: inv.hospital,
+    status: inv.status?.toLowerCase() === "paid" ? "dispensed" : (inv.status?.toLowerCase() || "completed"),
+    paymentStatus: inv.status?.toLowerCase() || "paid",
+    type: "pharma-invoice",
+    isPharmaInvoice: true,
+    raw: inv,
+  }));
 };
 
 const normalizeMedRecords = (records: any[]) => {
@@ -91,6 +147,7 @@ export const getPatientAppointments = async (req: Request, res: Response) => {
     if (hospitalId) query.hospital = hospitalId;
 
     const appointments = await Appointment.find(query)
+      .populate("patient", "name mobile address dateOfBirth age gender honorific email")
       .populate({
         path: "doctor",
         model: "DoctorProfile",
@@ -122,6 +179,15 @@ export const getPatientAppointments = async (req: Request, res: Response) => {
       ...(hospitalId ? { hospital: hospitalId } : {}) 
     }) as any)
       .unscoped() // CRITICAL: Allow seeing appointments across all tenants
+      .populate({
+        path: "patient",
+        model: "PatientProfile",
+        options: { unscoped: true },
+        populate: {
+          path: "user",
+          select: "name age gender dob dateOfBirth mobile email",
+        },
+      })
       .populate({
         path: "doctor",
         model: "DoctorProfile",
@@ -233,12 +299,188 @@ export const getPatientPrescriptions = async (req: Request, res: Response) => {
       (t) => !orderTokenNumbers.has(t.tokenNumber),
     );
 
+    const userMobile = (patientReq.user as any)?.mobile || (patientReq.user as any)?.phone;
+    const userName = (patientReq.user as any)?.name;
+    const profiles = await (PatientProfile.find({ user: userId }) as any).unscoped().select("mrn").lean();
+    const mrns = (profiles || []).map((p: any) => p.mrn).filter(Boolean);
+
+    let pharmaInvoices: any[] = [];
+    try {
+      let invoiceQuery: any = null;
+      if (mrns.length > 0) {
+        invoiceQuery = { mrn: { $in: mrns } };
+      } else if (userName && userMobile) {
+        invoiceQuery = {
+          customerPhone: userMobile,
+          patientName: new RegExp(`^${userName.trim()}$`, "i"),
+        };
+      } else if (userMobile) {
+        invoiceQuery = { customerPhone: userMobile };
+      }
+
+      if (invoiceQuery) {
+        pharmaInvoices = await (PharmaInvoice.find(invoiceQuery) as any)
+          .unscoped()
+          .populate("hospital", "name address logo city")
+          .sort({ createdAt: -1 })
+          .limit(50)
+          .lean();
+      }
+    } catch (e) {
+      console.warn("[getPatientPrescriptions] Invoice find warning:", e);
+    }
+
+    // ── Dynamically Enrich Prescriptions with Pharmacy Expiry & Batch Data ──
+    const hospitalIds = Array.from(
+      new Set(
+        prescriptions
+          .map((p: any) => p.hospital?._id || p.hospital)
+          .filter(Boolean)
+      )
+    );
+
+    let pharmaProducts: any[] = [];
+    try {
+      if (hospitalIds.length > 0) {
+        pharmaProducts = await Product.find({
+          hospital: { $in: hospitalIds },
+          expiryDate: { $exists: true, $ne: null },
+        })
+          .select("name brand generic batchNumber expiryDate hospital")
+          .lean();
+      }
+    } catch (pharmaErr) {
+      console.warn("[getPatientPrescriptions] Product find warning:", pharmaErr);
+    }
+
+    // Map pharmacy items from dispensed invoices
+    const invoiceItemsMap = new Map<string, { batchNo?: string; expiryDate?: Date }>();
+    (pharmaInvoices || []).forEach((inv: any) => {
+      (inv.items || []).forEach((it: any) => {
+        const cleanName = (it.productName || "").trim().toLowerCase();
+        if (cleanName && it.expiryDate && !invoiceItemsMap.has(cleanName)) {
+          invoiceItemsMap.set(cleanName, {
+            batchNo: it.batchNo,
+            expiryDate: it.expiryDate,
+          });
+        }
+      });
+    });
+
+    // Map pharmacy items from hospital product catalog
+    const productMap = new Map<string, { batchNo?: string; expiryDate?: Date }>();
+    (pharmaProducts || []).forEach((prod: any) => {
+      const keys = [prod.name, prod.brand, prod.generic]
+        .filter(Boolean)
+        .map((k: string) => k.trim().toLowerCase());
+      keys.forEach((k) => {
+        if (!productMap.has(k) && prod.expiryDate) {
+          productMap.set(k, {
+            batchNo: prod.batchNumber,
+            expiryDate: prod.expiryDate,
+          });
+        }
+      });
+    });
+
+    const enrichedPrescriptions = prescriptions.map((p: any) => {
+      if (!Array.isArray(p.medicines)) return p;
+
+      const enrichedMeds = p.medicines.map((m: any) => {
+        const medClean = (m.name || "").trim().toLowerCase();
+        let matched = invoiceItemsMap.get(medClean) || productMap.get(medClean);
+
+        if (!matched) {
+          for (const [k, val] of invoiceItemsMap.entries()) {
+            if (medClean.includes(k) || k.includes(medClean)) {
+              matched = val;
+              break;
+            }
+          }
+          if (!matched) {
+            for (const [k, val] of productMap.entries()) {
+              if (medClean.includes(k) || k.includes(medClean)) {
+                matched = val;
+                break;
+              }
+            }
+          }
+        }
+
+        const resolvedExpiry = m.expiryDate || matched?.expiryDate;
+        const resolvedBatch = m.batchNumber || matched?.batchNo;
+
+        if (resolvedExpiry) {
+          const expDate = new Date(resolvedExpiry);
+          const now = new Date();
+          const diffDays = Math.ceil(
+            (expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+          );
+          const isExpired = diffDays < 0;
+          const isExpiringSoon = diffDays >= 0 && diffDays <= 30;
+          const formattedExp = expDate.toLocaleDateString("en-US", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          });
+
+          return {
+            ...m,
+            expiryDate: expDate.toISOString(),
+            batchNumber: resolvedBatch || undefined,
+            daysUntilExpiry: diffDays,
+            isExpired,
+            isExpiringSoon,
+            expiryStatus: isExpired
+              ? "expired"
+              : isExpiringSoon
+              ? "expiring_soon"
+              : "valid",
+            expiryAlert: isExpired
+              ? `⚠️ Medicine EXPIRED on ${formattedExp}! Do not consume.`
+              : isExpiringSoon
+              ? `⏳ Expiring in ${diffDays} day${
+                  diffDays === 1 ? "" : "s"
+                } (${formattedExp}). Contact pharmacy for fresh stock.`
+              : `Exp: ${formattedExp}`,
+          };
+        }
+
+        return m;
+      });
+
+      return {
+        ...p,
+        medicines: enrichedMeds,
+      };
+    });
+
+    // Deduplicate clinical prescriptions by appointment ID and consultation signature
+    const seenAppts = new Set<string>();
+    const seenRxKeys = new Set<string>();
+    const dedupedPrescriptions = enrichedPrescriptions.filter((p: any) => {
+      const apptId = p.appointment?._id?.toString() || p.appointment?.toString();
+      if (apptId) {
+        if (seenAppts.has(apptId)) return false;
+        seenAppts.add(apptId);
+      }
+      const docId = p.doctor?._id?.toString() || p.doctor?.toString() || "";
+      const dateStr = new Date(p.prescriptionDate || p.createdAt || 0).toDateString();
+      const medNames = (p.medicines || []).map((m: any) => (m.name || "").trim().toLowerCase()).sort().join("|");
+      const rxKey = `${docId}_${dateStr}_${medNames}`;
+      if (rxKey && seenRxKeys.has(rxKey)) return false;
+      seenRxKeys.add(rxKey);
+      return true;
+    });
+
+    const normalizedInvoices = normalizePharmaInvoices(pharmaInvoices || []);
     const normalizedTokens = normalizePharma(uniqueTokens);
     const normalizedOrders = normalizePharma(pharmacyOrders);
     const normalizedMedRecs = normalizeMedRecords(medicationRecords || []);
 
     const merged = [
-      ...prescriptions,
+      ...normalizedInvoices,
+      ...dedupedPrescriptions,
       ...normalizedTokens,
       ...normalizedOrders,
       ...normalizedMedRecs,
@@ -352,6 +594,13 @@ export const getPatientLabRecords = async (req: Request, res: Response) => {
       const doctorName =
         order.doctor?.name || doctorNameMap.get(rawDoctorId) || null;
 
+      let orderAmount = Number(order.totalAmount ?? order.amount ?? 0);
+      if (!orderAmount && Array.isArray(order.tests)) {
+        orderAmount = order.tests.reduce((sum: number, t: any) => {
+          return sum + (Number(t.test?.price ?? t.price ?? 0) || 0);
+        }, 0);
+      }
+
       return {
         _id: order._id,
         source: "lab-order",
@@ -361,6 +610,10 @@ export const getPatientLabRecords = async (req: Request, res: Response) => {
         doctor: doctorName ? { name: doctorName } : null,
         hospital: order.hospital,
         paymentStatus: order.paymentStatus,
+        amount: orderAmount,
+        totalAmount: orderAmount,
+        paidAmount: Number(order.paidAmount ?? (order.paymentStatus === "paid" ? orderAmount : 0)),
+        balance: Number(order.balance ?? (order.paymentStatus === "paid" ? 0 : orderAmount)),
         sampleCollectedAt: order.sampleCollectedAt,
         resultsEnteredAt: order.resultsEnteredAt,
         completedAt: order.completedAt,
@@ -368,12 +621,14 @@ export const getPatientLabRecords = async (req: Request, res: Response) => {
         tests: (order.tests || []).map((t: any) => {
           const tName =
             t.test?.testName || t.test?.name || t.testName || "Unknown Test";
+          const tPrice = Number(t.test?.price ?? t.price ?? 0);
           return {
             name: tName,
             testName: tName,
             testId: t.test?._id || t.test,
             category: t.test?.category,
-            price: t.test?.price,
+            price: tPrice,
+            cost: tPrice,
             status: t.status,
             result: t.result,
             remarks: t.remarks,
@@ -390,32 +645,43 @@ export const getPatientLabRecords = async (req: Request, res: Response) => {
     });
 
     // 5. Normalize pending LabTokens (no results yet)
-    const normalizedPending = pendingTokens.map((token: any) => ({
-      _id: token._id,
-      source: "lab-token",
-      tokenNumber: token.tokenNumber,
-      status: token.status || "prescribed",
-      doctorNotified: false,
-      doctor: token.doctor,
-      hospital: token.hospital,
-      appointment: token.appointment,
-      priority: token.priority,
-      notes: token.notes,
-      createdAt: token.createdAt,
-      tests: (token.tests || []).map((t: any) => {
-        const tName = t.name || t.testName || "Unknown Test";
-        return {
-          name: tName,
-          testName: tName,
-          category: t.category,
-          price: t.price,
-          instructions: t.instructions,
-          status: "pending",
-          result: null,
-          subTests: [],
-        };
-      }),
-    }));
+    const normalizedPending = pendingTokens.map((token: any) => {
+      let tokenAmount = Number(token.totalAmount ?? token.amount ?? 0);
+      if (!tokenAmount && Array.isArray(token.tests)) {
+        tokenAmount = token.tests.reduce((sum: number, t: any) => sum + (Number(t.price ?? t.cost ?? 0) || 0), 0);
+      }
+      return {
+        _id: token._id,
+        source: "lab-token",
+        tokenNumber: token.tokenNumber,
+        status: token.status || "prescribed",
+        doctorNotified: false,
+        doctor: token.doctor,
+        hospital: token.hospital,
+        appointment: token.appointment,
+        priority: token.priority,
+        notes: token.notes,
+        createdAt: token.createdAt,
+        amount: tokenAmount,
+        totalAmount: tokenAmount,
+        paymentStatus: token.paymentStatus || "pending",
+        tests: (token.tests || []).map((t: any) => {
+          const tName = t.name || t.testName || "Unknown Test";
+          const tPrice = Number(t.price ?? t.cost ?? 0);
+          return {
+            name: tName,
+            testName: tName,
+            category: t.category,
+            price: tPrice,
+            cost: tPrice,
+            instructions: t.instructions,
+            status: "pending",
+            result: null,
+            subTests: [],
+          };
+        }),
+      };
+    });
 
     // 6. Merge: completed orders first, then pending tokens
     const merged = [...normalizedOrders, ...normalizedPending]
@@ -760,6 +1026,7 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
       (async () => {
         const profiles = await (PatientProfile.find({ user: userId }) as any).unscoped().select("mrn").lean();
         const userMobile = patientReq.user?.mobile;
+        const userName = patientReq.user?.name;
 
         const mrns = profiles.map((p: any) => p.mrn).filter(Boolean);
         if (mrns.length === 0 && !userMobile) return [];
@@ -767,16 +1034,17 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
         const query: any = { status: "completed" };
         if (hospitalId) query.hospital = hospitalId;
 
-        if (mrns.length > 0 && userMobile) {
-          query.$or = [{ mrn: { $in: mrns } }, { phone: userMobile }];
-        } else if (mrns.length > 0) {
+        if (mrns.length > 0) {
           query.mrn = { $in: mrns };
-        } else {
+        } else if (userName && userMobile) {
+          query.phone = userMobile;
+          query.patientName = new RegExp(`^${userName.trim()}$`, "i");
+        } else if (userMobile) {
           query.phone = userMobile;
         }
 
         return DischargeRecord.find(query)
-          .select("documentId patientName diagnosis dischargeDate followUpDate hospitalName specialistType consultants")
+          .select("documentId patientName diagnosis dischargeDate followUpDate hospitalName specialistType consultants mrn ipNo roomNo bedNo")
           .sort({ dischargeDate: -1 })
           .limit(10)
           .lean();
@@ -791,6 +1059,7 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
         const profiles = await (PatientProfile.find({ user: userId }) as any).unscoped().select("_id").lean();
         const profileIds = (profiles || []).map(p => p._id);
         return (MobileAppointment.find({ patient: { $in: profileIds }, ...hospitalFilter }) as any)
+          .unscoped()
           .populate({
             path: "doctor",
             model: "DoctorProfile",
@@ -818,9 +1087,50 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
         .lean(),
     ]);
 
+    const userMobile = (patientReq.user as any)?.mobile || (patientReq.user as any)?.phone;
+    const userName = (patientReq.user as any)?.name;
+    const patProfiles = await (PatientProfile.find({ user: userId }) as any).unscoped().select("mrn").lean();
+    const patMrns = (patProfiles || []).map((p: any) => p.mrn).filter(Boolean);
+
+    let pharmaInvoices: any[] = [];
+    try {
+      let invoiceQuery: any = null;
+      if (patMrns.length > 0) {
+        invoiceQuery = { mrn: { $in: patMrns }, ...(hospitalFilter || {}) };
+      } else if (userName && userMobile) {
+        invoiceQuery = {
+          customerPhone: userMobile,
+          patientName: new RegExp(`^${userName.trim()}$`, "i"),
+          ...(hospitalFilter || {}),
+        };
+      } else if (userMobile) {
+        invoiceQuery = { customerPhone: userMobile, ...(hospitalFilter || {}) };
+      }
+
+      if (invoiceQuery) {
+        pharmaInvoices = await (PharmaInvoice.find(invoiceQuery) as any)
+          .unscoped()
+          .populate("hospital", "name address logo")
+          .sort({ createdAt: -1 })
+          .limit(20)
+          .lean();
+      }
+    } catch (e) {
+      console.warn("[getPatientDashboardData] Invoice find warning:", e);
+    }
+
+    const normalizedInvoices = normalizePharmaInvoices(pharmaInvoices || []);
+    const normalizedPharmaTokens = normalizePharma(pharmacyTokens || []);
+    const normalizedPharmaOrders = normalizePharma(pharmacyOrders || []);
     const normalizedMedRecs = normalizeMedRecords(medicationRecords || []);
     
-    const allPrescriptions = [...prescriptions, ...normalizedMedRecs]
+    const allPrescriptions = [
+      ...normalizedInvoices,
+      ...prescriptions,
+      ...normalizedPharmaTokens,
+      ...normalizedPharmaOrders,
+      ...normalizedMedRecs,
+    ]
       .sort((a: any, b: any) => {
         const dateB = new Date(b.prescriptionDate || b.createdAt || 0).getTime();
         const dateA = new Date(a.prescriptionDate || a.createdAt || 0).getTime();
@@ -905,6 +1215,13 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
       const doctorName =
         order.doctor?.name || doctorNameMap.get(rawDoctorId) || "Hospital Lab";
 
+      let orderAmount = Number(order.totalAmount ?? order.amount ?? 0);
+      if (!orderAmount && Array.isArray(order.tests)) {
+        orderAmount = order.tests.reduce((sum: number, t: any) => {
+          return sum + (Number(t.test?.price ?? t.price ?? 0) || 0);
+        }, 0);
+      }
+
       return {
         _id: order._id,
         source: "lab-order",
@@ -913,15 +1230,22 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
         doctor: { name: doctorName },
         hospital: order.hospital,
         paymentStatus: order.paymentStatus,
+        amount: orderAmount,
+        totalAmount: orderAmount,
+        paidAmount: Number(order.paidAmount ?? (order.paymentStatus === "paid" ? orderAmount : 0)),
+        balance: Number(order.balance ?? (order.paymentStatus === "paid" ? 0 : orderAmount)),
         createdAt: order.createdAt,
         resultsEnteredAt: order.resultsEnteredAt,
         completedAt: order.completedAt,
         tests: (order.tests || []).map((t: any) => {
           const tName =
             t.test?.testName || t.test?.name || t.testName || "Unknown";
+          const tPrice = Number(t.test?.price ?? t.price ?? 0);
           return {
             name: tName,
             testName: tName, // for compatibility
+            price: tPrice,
+            cost: tPrice,
             status: t.status,
             result: t.result,
             remarks: t.remarks,
@@ -938,24 +1262,36 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
     });
 
     // 4. Normalize unique LabTokens (Requests)
-    const normalizedTokens = uniqueTokens.map((token: any) => ({
-      _id: token._id,
-      source: "lab-token",
-      tokenNumber: token.tokenNumber,
-      status: token.status || "prescribed",
-      doctor: token.doctor,
-      hospital: token.hospital,
-      createdAt: token.createdAt,
-      tests: (token.tests || []).map((t: any) => {
-        const tName = t.name || t.testName || "Unknown";
-        return {
-          name: tName,
-          testName: tName,
-          category: t.category,
-          status: "pending",
-        };
-      }),
-    }));
+    const normalizedTokens = uniqueTokens.map((token: any) => {
+      let tokenAmount = Number(token.totalAmount ?? token.amount ?? 0);
+      if (!tokenAmount && Array.isArray(token.tests)) {
+        tokenAmount = token.tests.reduce((sum: number, t: any) => sum + (Number(t.price ?? t.cost ?? 0) || 0), 0);
+      }
+      return {
+        _id: token._id,
+        source: "lab-token",
+        tokenNumber: token.tokenNumber,
+        status: token.status || "prescribed",
+        doctor: token.doctor,
+        hospital: token.hospital,
+        createdAt: token.createdAt,
+        amount: tokenAmount,
+        totalAmount: tokenAmount,
+        paymentStatus: token.paymentStatus || "pending",
+        tests: (token.tests || []).map((t: any) => {
+          const tName = t.name || t.testName || "Unknown";
+          const tPrice = Number(t.price ?? t.cost ?? 0);
+          return {
+            name: tName,
+            testName: tName,
+            price: tPrice,
+            cost: tPrice,
+            category: t.category,
+            status: "pending",
+          };
+        }),
+      };
+    });
 
     const mergedLabRecords = [...normalizedOrders, ...normalizedTokens].sort(
       (a: any, b: any) =>

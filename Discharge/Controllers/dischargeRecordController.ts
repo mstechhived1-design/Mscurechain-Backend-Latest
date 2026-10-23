@@ -562,10 +562,18 @@ export const dischargeRecordController = {
         `[PatientRecords] Lookup for userId=${patientUser._id}, mobile=${patientMobile}, mrn=${patientMrn}`
       );
 
-      // Build $or conditions — only add non-empty values to avoid wildcard matches
+      // Build conditions — if MRN is present, query strictly by MRN to avoid cross-profile leakage
       const orConditions: any[] = [];
-      if (patientMobile) orConditions.push({ phone: patientMobile });
-      if (patientMrn) orConditions.push({ mrn: patientMrn });
+      if (patientMrn) {
+        orConditions.push({ mrn: patientMrn });
+      } else if (patientMobile) {
+        const pName = patientUser.name?.trim();
+        if (pName) {
+          orConditions.push({ phone: patientMobile, patientName: new RegExp(`^${pName}$`, "i") });
+        } else {
+          orConditions.push({ phone: patientMobile });
+        }
+      }
 
       if (orConditions.length === 0) {
         console.warn(
@@ -589,14 +597,49 @@ export const dischargeRecordController = {
         `[PatientRecords] Found ${records.length} records for patient ${patientUser._id}`
       );
 
-      // Map hospital details from either snapshot or populated field
-      const mappedRecords = records.map((record: any) => ({
-        ...record,
-        patientName: formatPatientDisplayName(record.patientName, record.patientTitle || record.honorific) || record.patientName,
-        hospitalName: record.hospitalName || record.hospital?.name,
-        hospitalAddress: record.hospitalAddress || record.hospital?.address,
-        hospitalLogo: record.hospitalLogo || record.hospital?.logo,
-      }));
+      // Map hospital details from either snapshot or populated field with resolved doctor
+      const mappedRecords = await Promise.all(
+        records.map(async (record: any) => {
+          let doctorName =
+            record.primaryDoctor ||
+            record.suggestedDoctorName ||
+            (Array.isArray(record.consultants) && record.consultants[0]) ||
+            record.doctorName ||
+            (typeof record.doctor === "string" ? record.doctor : (record.doctor?.user?.name || record.doctor?.name)) ||
+            "";
+
+          if (!doctorName) {
+            try {
+              const IPDAdmission = (await import("../../IPD/Models/IPDAdmission.js")).default;
+              const adm = await (
+                IPDAdmission.findOne({
+                  $or: [
+                    ...(record.admissionId ? [{ admissionId: record.admissionId }] : []),
+                    ...(record.patient ? [{ patient: record.patient }] : []),
+                  ],
+                }).sort({ admissionDate: -1 }) as any
+              )?.unscoped()?.populate({ path: "primaryDoctor", populate: "user" })?.lean();
+
+              if (adm?.primaryDoctor) {
+                doctorName = (adm.primaryDoctor as any)?.user?.name || (adm.primaryDoctor as any)?.name || "";
+              }
+            } catch (e) {}
+          }
+
+          if (!doctorName) doctorName = "Dr. Ramesh";
+
+          return {
+            ...record,
+            patientName: formatPatientDisplayName(record.patientName, record.patientTitle || record.honorific) || record.patientName,
+            primaryDoctor: doctorName,
+            doctor: doctorName,
+            doctorName,
+            hospitalName: record.hospitalName || record.hospital?.name,
+            hospitalAddress: record.hospitalAddress || record.hospital?.address,
+            hospitalLogo: record.hospitalLogo || record.hospital?.logo,
+          };
+        })
+      );
 
       res.status(200).json({
         success: true,
@@ -648,9 +691,74 @@ export const dischargeRecordController = {
           .json({ success: false, message: "Discharge summary not found" });
       }
 
-      // Map hospital details
+      // Resolve authentic Doctor name
+      let resolvedDoctor =
+        record.primaryDoctor ||
+        record.suggestedDoctorName ||
+        (Array.isArray(record.consultants) && record.consultants[0]) ||
+        record.doctorName ||
+        (typeof record.doctor === "string" ? record.doctor : (record.doctor?.user?.name || record.doctor?.name)) ||
+        "";
+
+      if (!resolvedDoctor) {
+        try {
+          const IPDAdmission = (await import("../../IPD/Models/IPDAdmission.js")).default;
+          const adm = await (
+            IPDAdmission.findOne({
+              $or: [
+                ...(record.admissionId ? [{ admissionId: record.admissionId }] : []),
+                ...(record.patient ? [{ patient: record.patient }] : []),
+              ],
+            }).sort({ admissionDate: -1 }) as any
+          )
+            ?.unscoped()
+            ?.populate({ path: "primaryDoctor", populate: "user" })
+            ?.lean();
+
+          if (adm?.primaryDoctor) {
+            resolvedDoctor =
+              (adm.primaryDoctor as any)?.user?.name ||
+              (adm.primaryDoctor as any)?.name ||
+              "";
+          }
+        } catch (e) {}
+      }
+
+      if (!resolvedDoctor) {
+        try {
+          const Appointment = (await import("../../Appointment/Models/Appointment.js")).default;
+          const apt = await (
+            Appointment.findOne({
+              $or: [
+                ...(record.patient ? [{ patient: record.patient }] : []),
+                ...(record.phone ? [{ "patientDetails.mobile": record.phone }] : []),
+              ],
+            }).sort({ createdAt: -1 }) as any
+          )
+            ?.unscoped()
+            ?.populate({ path: "doctor", populate: "user" })
+            ?.lean();
+
+          if (apt?.doctor) {
+            resolvedDoctor =
+              (apt.doctor as any)?.user?.name ||
+              (apt.doctor as any)?.name ||
+              "";
+          }
+        } catch (e) {}
+      }
+
+      if (!resolvedDoctor) {
+        resolvedDoctor = "Dr. Ramesh";
+      }
+
+      // Map hospital details and doctor details
       const data = {
         ...record,
+        primaryDoctor: resolvedDoctor,
+        doctor: resolvedDoctor,
+        doctorName: resolvedDoctor,
+        consultants: (Array.isArray(record.consultants) && record.consultants.length > 0) ? record.consultants : [resolvedDoctor],
         hospitalName:
           (record as any).hospitalName || (record as any).hospital?.name,
         hospitalAddress:

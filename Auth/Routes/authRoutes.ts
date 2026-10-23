@@ -35,6 +35,9 @@ import {
 } from "../../middleware/Auth/loginSecurity.js";
 
 
+import upload from "../../middleware/Upload/upload.js";
+import { scanAadhaarDocument } from "../Controllers/aadhaarController.js";
+
 const router = express.Router();
 
 // ─── Public Auth Endpoints ───────────────────────────────────────────────────
@@ -42,6 +45,7 @@ router.post("/check-existence", checkExistence);
 router.post("/register", registerValidator, register);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
+router.post("/scan-aadhaar", upload.single("image"), scanAadhaarDocument);
 
 // ✅ MULTI-TAB LOGIN: Hospital verification step (pre-login, no auth required)
 // Frontend calls this in Step 1 before asking for user credentials.
@@ -116,8 +120,6 @@ router.post(
   ],
   emergencyAuthController.login,
 );
-
-import upload from "../../middleware/Upload/upload.js";
 
 router
   .route("/me")

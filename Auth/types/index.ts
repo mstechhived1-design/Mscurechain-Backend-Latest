@@ -100,6 +100,10 @@ export interface IPatient extends Document {
   age?: number;
   ageUnit?: "Years" | "Months" | "Days";
   dateOfBirth?: Date;
+  dob?: string;
+  fatherName?: string;
+  GuardianName?: string;
+  guardianName?: string;
   createdAt: Date;
   updatedAt: Date;
 

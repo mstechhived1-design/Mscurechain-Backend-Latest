@@ -24,8 +24,7 @@
     "dist",
     "tests",
     "scripts",
-    "scratch",
-    "find-kiran.ts",
+    "docs",
     "data",
     "*.js"
   ]

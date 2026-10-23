@@ -2,7 +2,9 @@ import { Request, Response } from "express";
 import MobileAppointment from "../Models/MobileAppointment.js";
 import DoctorProfile from "../../Doctor/Models/DoctorProfile.js";
 import Hospital from "../../Hospital/Models/Hospital.js";
+import HospitalCounter from "../../Hospital/Models/HospitalCounter.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
+import Patient from "../../Patient/Models/Patient.js";
 import Leave from "../../Leave/Models/Leave.js";
 import MasterDoctorLeave from "../../MasterHelpdesk/Models/MasterDoctorLeave.js";
 import crypto from "crypto";
@@ -627,26 +629,42 @@ export const bookOnlineAppointment = async (req: Request, res: Response) => {
 
     console.log(`[Mobile Book] Booking attempt for User: ${(req as any).user?._id}`);
     
-    let patient: any = await (PatientProfile.findOne({ user: (req as any).user?._id }) as any).unscoped();
+    let patient: any = await (PatientProfile.findOne({ 
+      user: (req as any).user?._id,
+      hospital: hospitalId 
+    }) as any).unscoped();
     
     if (!patient) {
+      // Check if user has any existing profile to grab details from
+      const anyProfile = await (PatientProfile.findOne({ user: (req as any).user?._id }) as any).unscoped();
+      const userDoc = await (Patient.findById((req as any).user?._id) as any).unscoped();
+      
       try {
-        console.log(`[Mobile Book] PatientProfile missing. Attempting auto-creation...`);
-        // Fallback: Create basic profile linked to the target hospital
-        // Ensure we are using the hospitalId from the request
+        console.log(`[Mobile Book] PatientProfile missing for hospital ${hospitalId}. Attempting auto-creation...`);
         const sequentialMrn = await generateMrn(hospitalId);
         patient = await (PatientProfile as any).create({
           user: (req as any).user?._id,
           hospital: hospitalId, 
-          mrn: sequentialMrn
+          mrn: sequentialMrn,
+          gender: userDoc?.gender ? (userDoc.gender.toLowerCase() === 'male' || userDoc.gender.toLowerCase() === 'female' ? userDoc.gender.toLowerCase() : 'other') : (anyProfile?.gender || undefined),
+          dob: userDoc?.dateOfBirth || (userDoc?.dob ? new Date(userDoc.dob) : anyProfile?.dob),
+          age: userDoc?.age || anyProfile?.age,
+          address: userDoc?.address || anyProfile?.address,
+          GuardianName: userDoc?.GuardianName || userDoc?.fatherName || anyProfile?.GuardianName,
+          honorific: userDoc?.honorific || anyProfile?.honorific,
         });
         console.log(`[Mobile Book] Successfully created auto-profile ID: ${patient._id}`);
       } catch (profileErr: any) {
         console.error(`[Mobile Book] CRITICAL: Failed to auto-create PatientProfile: ${profileErr.message}`);
-        return res.status(500).json({ 
-          message: "Could not initialize patient profile. Required fields might be missing.",
-          error: profileErr.message 
-        });
+        // If profile creation failed, fallback to any existing profile so booking is never blocked
+        if (anyProfile) {
+          patient = anyProfile;
+        } else {
+          return res.status(500).json({ 
+            message: "Could not initialize patient profile.",
+            error: profileErr.message 
+          });
+        }
       }
     } else {
        console.log(`[Mobile Book] Found existing profile ID: ${patient._id}`);
@@ -728,8 +746,28 @@ export const bookOnlineAppointment = async (req: Request, res: Response) => {
 
     const feePaid = Number(req.body.consultationFee) || doctor.consultationFee || 500;
 
+    const targetDateString = typeof date === "string"
+      ? date.split("T")[0]
+      : new Date(date as string).toISOString().split("T")[0];
+    const counterKey = `DOCTOR_QUEUE_${doctorId}_${targetDateString}`;
+
+    let generatedTokenNumber = "01";
+    try {
+      const counter = await HospitalCounter.findOneAndUpdate(
+        { hospital: hospitalId, type: counterKey },
+        { $inc: { sequence: 1 } },
+        { upsert: true, new: true }
+      );
+      if (counter && counter.sequence) {
+        generatedTokenNumber = String(counter.sequence).padStart(2, "0");
+      }
+    } catch (cErr) {
+      console.warn("[Mobile Book] Counter increment error, falling back to 01:", cErr);
+    }
+
     const newAppointment = await MobileAppointment.create({
       appointmentId: transactionId,
+      token_number: generatedTokenNumber,
       patient: patient?._id,
       doctor: doctorId,
       hospital: hospitalId,
@@ -753,7 +791,19 @@ export const bookOnlineAppointment = async (req: Request, res: Response) => {
     });
 
 
-    console.log(`[Mobile Book] Appointment created: ${newAppointment.appointmentId}`);
+    console.log(`[Mobile Book] Appointment created: ${newAppointment.appointmentId} with token #${generatedTokenNumber}`);
+
+    // Emit real-time queue update to TV display and patient socket
+    try {
+      const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
+      const { getIO } = await import("../../config/socket.js");
+      const io = (req as any).io || getIO();
+      if (io) {
+        await emitQueueUpdate(io, doctorId as any, hospitalId as any);
+      }
+    } catch (wsErr) {
+      console.warn("[Mobile Book] Queue update emit failed:", wsErr);
+    }
 
     // --- CREATE TRANSACTION RECORD ---
     try {

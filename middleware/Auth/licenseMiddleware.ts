@@ -32,6 +32,11 @@ export const checkPortalLicense = (portal: PortalKey) => {
         return res.status(401).json({ message: "Authentication required" });
       }
 
+      // Patients are consumers/clients and do not require staff portal licenses
+      if (user.role === "patient") {
+        return next();
+      }
+
       const hospitalId = user.hospital || req.headers["x-hospital-id"];
       if (!hospitalId) {
         return next(); // no hospital context – let route handle it

@@ -2263,7 +2263,8 @@ export const getAppointmentById = asyncHandler(
       const { id } = req.params;
       const isMasterUser = (req as any).user?.role === "masterhelpdesk" || (req as any).user?.role === "super-admin";
 
-      let query = Appointment.findById(id);
+      const isObjectId = mongoose.Types.ObjectId.isValid(id);
+      let query = isObjectId ? Appointment.findById(id) : Appointment.findOne({ appointmentId: id });
       if (isMasterUser) {
         query = (query as any).unscoped();
       }
@@ -2279,7 +2280,7 @@ export const getAppointmentById = asyncHandler(
 
       if (!appointment) {
         // Check MobileAppointment
-        let mobileQuery = MobileAppointment.findById(id);
+        let mobileQuery = isObjectId ? MobileAppointment.findById(id) : MobileAppointment.findOne({ appointmentId: id });
         if (isMasterUser) {
           mobileQuery = (mobileQuery as any).unscoped();
         }
@@ -2940,21 +2941,78 @@ export const checkInAppointment = asyncHandler(
 export const getLiveAppointmentQueue = asyncHandler(
   async (req: Request, res: Response) => {
     const { appointmentId } = req.params;
+    const isObjectId = mongoose.Types.ObjectId.isValid(appointmentId);
 
-    const appointment = await (Appointment.findById(appointmentId) as any)
-      .unscoped()
-      .populate({
-        path: "doctor",
-        model: "DoctorProfile",
-        options: { unscoped: true },
-        populate: {
-          path: "user",
-          model: "User",
-          select: "name email mobile",
+    let appointment: any = null;
+    let isMobile = false;
+
+    if (isObjectId) {
+      appointment = await (Appointment.findById(appointmentId) as any)
+        ?.unscoped()
+        ?.populate({
+          path: "doctor",
+          model: "DoctorProfile",
           options: { unscoped: true },
-        },
-      })
-      .populate("hospital", "name address logo");
+          populate: {
+            path: "user",
+            model: "User",
+            select: "name email mobile",
+            options: { unscoped: true },
+          },
+        })
+        ?.populate("hospital", "name address logo");
+    }
+
+    if (!appointment) {
+      appointment = await (Appointment.findOne({ appointmentId }) as any)
+        ?.unscoped()
+        ?.populate({
+          path: "doctor",
+          model: "DoctorProfile",
+          options: { unscoped: true },
+          populate: {
+            path: "user",
+            model: "User",
+            select: "name email mobile",
+            options: { unscoped: true },
+          },
+        })
+        ?.populate("hospital", "name address logo");
+    }
+
+    if (!appointment && isObjectId) {
+      appointment = await (MobileAppointment.findById(appointmentId) as any)
+        ?.unscoped()
+        ?.populate({
+          path: "doctor",
+          options: { unscoped: true },
+          populate: {
+            path: "user",
+            options: { unscoped: true },
+            select: "name email mobile",
+          },
+        })
+        ?.populate("hospital", "name address logo");
+
+      if (appointment) isMobile = true;
+    }
+
+    if (!appointment) {
+      appointment = await (MobileAppointment.findOne({ appointmentId }) as any)
+        ?.unscoped()
+        ?.populate({
+          path: "doctor",
+          options: { unscoped: true },
+          populate: {
+            path: "user",
+            options: { unscoped: true },
+            select: "name email mobile",
+          },
+        })
+        ?.populate("hospital", "name address logo");
+
+      if (appointment) isMobile = true;
+    }
 
     if (!appointment) {
       return res.status(404).json({ success: false, message: "Appointment not found" });
@@ -2969,26 +3027,43 @@ export const getLiveAppointmentQueue = asyncHandler(
     const endOfDay = new Date(apptDate);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const dayAppointments = await (Appointment.find({
-      doctor: doctorId,
-      date: { $gte: startOfDay, $lte: endOfDay },
-      status: { $nin: ["cancelled", "Cancelled"] },
-    }) as any)
-      .unscoped()
-      .select("_id appointmentTime startTime token_number queue_status status patient createdAt called_time consultationStartTime consultationEndTime consultationDuration pausedDuration isPaused pausedAt")
-      .sort({ token_number: 1, startTime: 1, appointmentTime: 1, createdAt: 1 })
-      .lean();
+    const [regularDayAppointments, mobileDayAppointments] = await Promise.all([
+      (Appointment.find({
+        doctor: doctorId,
+        date: { $gte: startOfDay, $lte: endOfDay },
+        status: { $nin: ["cancelled", "Cancelled"] },
+      }) as any)
+        .unscoped()
+        .select("_id appointmentId appointmentTime startTime token_number queue_status status patient createdAt called_time consultationStartTime consultationEndTime consultationDuration pausedDuration isPaused pausedAt")
+        .lean(),
+      (MobileAppointment.find({
+        doctor: doctorId,
+        date: { $gte: startOfDay, $lte: endOfDay },
+        status: { $nin: ["cancelled", "Cancelled"] },
+      }) as any)
+        .unscoped()
+        .select("_id appointmentId appointmentTime startTime token_number queue_status status patient createdAt called_time consultationStartTime consultationEndTime consultationDuration pausedDuration isPaused pausedAt")
+        .lean(),
+    ]);
 
+    const dayAppointments = [...(regularDayAppointments || []), ...(mobileDayAppointments || [])].sort((a: any, b: any) => {
+      const tA = parseInt(a.token_number, 10) || 0;
+      const tB = parseInt(b.token_number, 10) || 0;
+      if (tA && tB && tA !== tB) return tA - tB;
+      return new Date(a.createdAt || a.date || 0).getTime() - new Date(b.createdAt || b.date || 0).getTime();
+    });
+
+    // Only track active in-progress consultation for TODAY's scheduled queue
     const currentApt = dayAppointments.find((a: any) =>
-      a.status === "in-progress" || a.queue_status === "CURRENT"
-    );
+      ["in-progress", "In-Progress"].includes(a.status) || a.queue_status === "CURRENT"
+    ) || null;
 
     const completedCount = dayAppointments.filter((a: any) =>
       ["completed", "Completed"].includes(a.status) || a.queue_status === "COMPLETED"
     ).length;
 
-    const isCompleted = ["completed", "Completed"].includes(appointment.status) || appointment.queue_status === "COMPLETED";
-    const isCurrentPatient = currentApt ? (currentApt._id.toString() === appointment._id.toString()) : false;
+    const isCompleted = ["completed", "Completed"].includes(appointment.status) || appointment.queue_status === "COMPLETED" || Boolean(appointment.consultationEndTime);
+    const isCurrentPatient = !isCompleted && currentApt ? (currentApt._id.toString() === appointment._id.toString()) : false;
 
     const waitingApts = dayAppointments.filter((a: any) =>
       !["completed", "Completed", "cancelled", "Cancelled"].includes(a.status) &&
@@ -3019,24 +3094,46 @@ export const getLiveAppointmentQueue = asyncHandler(
     let queueStatus = "WAITING";
     if (isCompleted) {
       queueStatus = "COMPLETED";
-    } else if (appointment.isPaused) {
-      queueStatus = "PAUSED";
-    } else if (isCurrentPatient || (!currentApt && (appointment.status === "in-progress" || appointment.queue_status === "CURRENT"))) {
-      if (currentApt?.isPaused) {
+    } else if (isCurrentPatient || (!currentApt && (["in-progress", "In-Progress"].includes(appointment.status) || appointment.queue_status === "CURRENT"))) {
+      if (appointment.isPaused || currentApt?.isPaused) {
         queueStatus = "PAUSED";
       } else {
         queueStatus = "IN_CONSULTATION";
       }
+    } else if (appointment.isPaused) {
+      queueStatus = "PAUSED";
     } else if (patientsAhead <= 1) {
       queueStatus = "NEXT";
     } else {
       queueStatus = "WAITING";
     }
 
+    // Deterministic token resolution
+    const resolveToken = (apt: any, list: any[]) => {
+      if (apt?.token_number && String(apt.token_number).trim() !== "" && apt.token_number !== "N/A") {
+        return String(apt.token_number);
+      }
+      if (apt?._id) {
+        const idx = list.findIndex(a => a._id?.toString() === apt._id.toString());
+        if (idx >= 0) return String(idx + 1);
+      }
+      return "1";
+    };
+
+    const patientToken = resolveToken(appointment, dayAppointments);
+    let currentlyServingToken = "None";
+    if (isCurrentPatient) {
+      currentlyServingToken = patientToken;
+    } else if (currentApt) {
+      currentlyServingToken = resolveToken(currentApt, dayAppointments);
+    } else if (waitingApts.length > 0) {
+      currentlyServingToken = resolveToken(waitingApts[0], dayAppointments);
+    }
+
     const avgMinutes = 6;
     const estimatedWaitMinutes = patientsAhead * avgMinutes;
 
-    const rawName = (doctorProfile?.user as any)?.name;
+    const rawName = (doctorProfile?.user as any)?.name || doctorProfile?.name;
     const docName = rawName
       ? (rawName.startsWith("Dr.") ? rawName : `Dr. ${rawName}`)
       : "Attending Physician";
@@ -3055,9 +3152,9 @@ export const getLiveAppointmentQueue = asyncHandler(
         id: appointment.hospital?._id || appointment.hospital,
         name: appointment.hospital?.name || "Hospital",
       },
-      patientToken: appointment.token_number || String(thisIndex >= 0 ? thisIndex + 1 : "1"),
-      currentlyServingToken: currentApt?.token_number || (dayAppointments.length > 0 ? "1" : "None"),
-      currentlyServingId: currentApt?._id || null,
+      patientToken,
+      currentlyServingToken,
+      currentlyServingId: currentApt?._id || (isCurrentPatient ? appointment._id : null),
       queueStatus,
       patientsAhead: Math.max(0, patientsAhead),
       totalWaitingToday: waitingApts.length,
@@ -3073,12 +3170,12 @@ export const getLiveAppointmentQueue = asyncHandler(
       currentServingStartTime: currentApt?.consultationStartTime || currentApt?.called_time || null,
       currentServingEndTime: currentApt?.consultationEndTime || null,
       currentServingDuration: currentApt?.consultationDuration || 0,
-      isPaused: Boolean(appointment.isPaused),
-      pausedAt: appointment.pausedAt || null,
-      pausedDuration: appointment.pausedDuration || 0,
-      currentServingIsPaused: Boolean(currentApt?.isPaused),
-      currentServingPausedAt: currentApt?.pausedAt || null,
-      currentServingPausedDuration: currentApt?.pausedDuration || 0,
+      isPaused: Boolean(appointment.isPaused || (isCurrentPatient && currentApt?.isPaused)),
+      pausedAt: appointment.pausedAt || (isCurrentPatient ? currentApt?.pausedAt : null) || null,
+      pausedDuration: appointment.pausedDuration || (isCurrentPatient ? currentApt?.pausedDuration : 0) || 0,
+      currentServingIsPaused: Boolean(currentApt?.isPaused || (isCurrentPatient && appointment.isPaused)),
+      currentServingPausedAt: currentApt?.pausedAt || (isCurrentPatient ? appointment.pausedAt : null) || null,
+      currentServingPausedDuration: currentApt?.pausedDuration || (isCurrentPatient ? appointment.pausedDuration : 0) || 0,
       lastUpdated: new Date().toISOString(),
     });
   }

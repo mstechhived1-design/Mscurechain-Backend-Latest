@@ -24,16 +24,35 @@ export interface IMobileAppointment extends Document {
     spO2?: string;
   };
   
+  token_number?: string;
   consultationFee: number;
   paymentStatus: "Pending" | "Paid" | "Failed" | "Refunded";
   paymentMethod: string;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   
-  status: "Booked" | "Confirmed" | "Arrived" | "In-Progress" | "Completed" | "Cancelled";
+  status: "Booked" | "Confirmed" | "Arrived" | "In-Progress" | "in-progress" | "Completed" | "completed" | "Cancelled" | "cancelled";
   mrn?: string;
   tenantId: string;
   remindersSent: string[]; // Track intervals: ["1h", "3h", "1d", "2d", "3d"]
+  
+  // Consultation Workflow fields
+  consultationStartTime?: Date;
+  consultationEndTime?: Date;
+  consultationDuration?: number;
+  called_time?: Date;
+  queue_status?: string;
+  isPaused?: boolean;
+  pausedAt?: Date;
+  pausedDuration?: number;
+  diagnosis?: string;
+  clinicalNotes?: string;
+  plan?: string;
+  prescription?: mongoose.Types.ObjectId;
+  labToken?: mongoose.Types.ObjectId;
+  sentToHelpdesk?: boolean;
+  sentToHelpdeskAt?: Date;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -63,6 +82,7 @@ const MobileAppointmentSchema: Schema = new Schema(
       spO2: { type: String },
     },
     
+    token_number: { type: String },
     consultationFee: { type: Number, required: true },
     paymentStatus: { type: String, enum: ["Pending", "Paid", "Failed", "Refunded"], default: "Pending" },
     paymentMethod: { type: String, default: "razorpay" },
@@ -71,12 +91,29 @@ const MobileAppointmentSchema: Schema = new Schema(
     
     status: { 
       type: String, 
-      enum: ["Booked", "Confirmed", "Arrived", "In-Progress", "Completed", "Cancelled"],
+      enum: ["Booked", "Confirmed", "Arrived", "In-Progress", "in-progress", "Completed", "completed", "Cancelled", "cancelled"],
       default: "Booked" 
     },
     mrn: { type: String },
     tenantId: { type: String },
     remindersSent: [{ type: String }],
+
+    // Consultation fields
+    consultationStartTime: { type: Date },
+    consultationEndTime: { type: Date },
+    consultationDuration: { type: Number, default: 0 },
+    called_time: { type: Date },
+    queue_status: { type: String },
+    isPaused: { type: Boolean, default: false },
+    pausedAt: { type: Date },
+    pausedDuration: { type: Number, default: 0 },
+    diagnosis: { type: String },
+    clinicalNotes: { type: String },
+    plan: { type: String },
+    prescription: { type: Schema.Types.ObjectId, ref: "Prescription" },
+    labToken: { type: Schema.Types.ObjectId, ref: "LabToken" },
+    sentToHelpdesk: { type: Boolean, default: false },
+    sentToHelpdeskAt: { type: Date },
   },
   { timestamps: true }
 );
