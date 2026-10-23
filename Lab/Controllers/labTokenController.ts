@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import LabToken from "../Models/LabToken.js";
 import Appointment from "../../Appointment/Models/Appointment.js";
+import MobileAppointment from "../../Appointment/Models/MobileAppointment.js";
 import LabOrder from "../Models/LabOrder.js";
 import DoctorProfile from "../../Doctor/Models/DoctorProfile.js";
 import IPDAdmission from "../../IPD/Models/IPDAdmission.js";
@@ -34,11 +35,14 @@ export const createLabToken = async (req: LabTokenRequest, res: Response) => {
     let doctorUserId: any = doctorId; // fallback to logged-in user
 
     if (appointmentId) {
-      const appointment = await Appointment.findById(appointmentId);
+      let appointment = await (Appointment.findById(appointmentId) as any)?.unscoped();
+      if (!appointment) {
+        appointment = await (MobileAppointment.findById(appointmentId) as any)?.unscoped();
+      }
       if (!appointment) {
         return res.status(404).json({ message: "Appointment not found" });
       }
-      patient = appointment.patient;
+      patient = appointment.patient?.user || appointment.patient;
       doctor = appointment.doctor; // DoctorProfile ID
       hospital = appointment.hospital;
 
@@ -81,9 +85,14 @@ export const createLabToken = async (req: LabTokenRequest, res: Response) => {
 
     // --- LINK BACK TO APPOINTMENT (if exists) ---
     if (appointmentId) {
-      await Appointment.findByIdAndUpdate(appointmentId, {
+      const updatedAppt = await Appointment.findByIdAndUpdate(appointmentId, {
         labToken: labToken._id,
       });
+      if (!updatedAppt) {
+        await MobileAppointment.findByIdAndUpdate(appointmentId, {
+          labToken: labToken._id,
+        });
+      }
     }
 
     // --- NEW: Create LabOrder for Lab Staff View ---

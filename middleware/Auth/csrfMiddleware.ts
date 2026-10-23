@@ -24,6 +24,7 @@ const PUBLIC_PATHS = [
   "/auth/pharmacy/login",
   "/auth/emergency/login",
   "/auth/register",
+  "/auth/scan-aadhaar",
   "/auth/forgot-password",
   "/auth/reset-password",
   "/auth/refresh",
@@ -41,6 +42,8 @@ const PUBLIC_PATHS = [
   "/discharge/auth/login",
   "/discharge/auth/refresh",
   "/discharge/auth/logout",
+  "/patient/receipts",
+  "/receipts",
 ];
 
 export const validateCsrf = async (req: Request, res: Response, next: NextFunction) => {

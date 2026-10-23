@@ -27,6 +27,8 @@ export interface IPrescription extends Document {
     duration: string;
     quantity?: string;
     instructions?: string;
+    expiryDate?: Date;
+    batchNumber?: string;
   }[];
   advice: string;
   dietAdvice?: string[];
@@ -82,6 +84,8 @@ const PrescriptionSchema: Schema = new Schema(
         duration: { type: String, required: true, default: 'As directed' },
         quantity: { type: String },
         instructions: { type: String },
+        expiryDate: { type: Date },
+        batchNumber: { type: String },
       },
     ],
     advice: { type: String },

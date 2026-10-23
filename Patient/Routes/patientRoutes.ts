@@ -6,6 +6,9 @@ import {
   searchPatients,
   getPatientWithBedInfo,
   deleteAccount,
+  getFamilyMembers,
+  addFamilyMember,
+  switchFamilyMember,
 } from "../Controllers/patientController.js";
 import {
   getPatientAppointments,
@@ -16,6 +19,12 @@ import {
   getPatientHospitals,
   scanQRCode,
 } from "../Controllers/patientDataController.js";
+import {
+  recordDoseIntake,
+  getPatientMedicationStatus,
+  getPatientMedicationHistory,
+  triggerMedicineReminderNotification,
+} from "../Controllers/patientMedicationController.js";
 import { protect } from "../../middleware/Auth/authMiddleware.js";
 import multer from "multer";
 
@@ -52,6 +61,23 @@ router.delete(
   "/profile",
   authorizeRoles("patient"),
   deleteAccount,
+);
+
+// Family Members & Dependent Profiles
+router.get(
+  "/family-members",
+  authorizeRoles("patient"),
+  getFamilyMembers,
+);
+router.post(
+  "/family-members",
+  authorizeRoles("patient"),
+  addFamilyMember,
+);
+router.post(
+  "/switch-profile/:patientId",
+  authorizeRoles("patient"),
+  switchFamilyMember,
 );
 
 // Patient search and bed info routes (Isolated to hospital)
@@ -107,6 +133,28 @@ router.post(
   authorizeRoles("patient"),
   upload.single("image"),
   scanQRCode,
+);
+
+// Dedicated Mobile App Patient Medication Intake & History Tracking
+router.post(
+  "/medications/intake",
+  authorizeRoles("patient"),
+  recordDoseIntake,
+);
+router.get(
+  "/medications/status",
+  authorizeRoles("patient"),
+  getPatientMedicationStatus,
+);
+router.get(
+  "/medications/history",
+  authorizeRoles("patient"),
+  getPatientMedicationHistory,
+);
+router.post(
+  "/medications/reminder-trigger",
+  authorizeRoles("patient"),
+  triggerMedicineReminderNotification,
 );
 
 export default router;

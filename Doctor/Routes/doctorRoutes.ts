@@ -39,6 +39,10 @@ const router = express.Router();
 // Protected Routes Stack
 router.use(protect);
 router.use(resolveTenant);
+
+// Doctor directory search (accessible to patients & staff without doctor portal license)
+router.get("/", searchDoctors);
+
 router.use(checkPortalLicense("doctor"));
 
 // Doctor Profile
@@ -127,9 +131,6 @@ router.patch(
   ),
   updateDoctorStatus,
 );
-
-// Helper / Catch-all routes (Moved above requireTenant to allow global doctor search)
-router.get("/", searchDoctors);
 
 // Explicit Tenant Required for below
 router.use(requireTenant);

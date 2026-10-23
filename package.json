@@ -66,6 +66,7 @@
     "socket.io": "^4.8.3",
     "streamifier": "^0.1.1",
     "stripe": "^20.0.0",
+    "tesseract.js": "^7.0.0",
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0"
   },

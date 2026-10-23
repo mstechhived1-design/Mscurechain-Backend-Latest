@@ -177,6 +177,8 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
               type: "online",
               status: {
                 $in: [
+                  "scheduled",
+                  "Scheduled",
                   "confirmed",
                   "Confirmed",
                   "in-progress",
@@ -251,7 +253,12 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
       appointmentType: m.appointmentType || "OPD",
       visitType: "OPD",
       status: m.status?.toLowerCase() === "arrived" ? "arrived" : (m.status?.toLowerCase() || "confirmed"),
-      queue_status: "WAITING",
+      queue_status: m.queue_status || (["in-progress", "In-Progress"].includes(m.status) ? "CURRENT" : "WAITING"),
+      isPaused: Boolean(m.isPaused),
+      pausedAt: m.pausedAt || null,
+      pausedDuration: m.pausedDuration || 0,
+      consultationStartTime: m.consultationStartTime || null,
+      called_time: m.called_time || null,
       paymentStatus: (m.paymentStatus === "Paid" || m.paymentStatus === "paid") ? "paid" : "pending",
       fee: m.consultationFee || 0,
       amount: m.consultationFee || 0,
@@ -323,6 +330,9 @@ export const getDoctorDashboard = async (req: Request, res: Response) => {
           hospital: apt.hospital?.name || "Unknown",
           createdAt: apt.createdAt,
           date: apt.date,
+          isMobile: Boolean(apt.isMobile || apt.bookingChannel === "app" || apt.source === "app"),
+          bookingChannel: apt.bookingChannel || (apt.isMobile ? "app" : (apt.type?.toLowerCase() === "online" ? "online" : "offline")),
+          source: apt.source || (apt.isMobile ? "app" : (apt.type?.toLowerCase() === "online" ? "online" : "offline")),
         }));
       })(),
       recentPatients,
@@ -1323,48 +1333,116 @@ export const startNextAppointment = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "Doctor profile not found" });
     }
 
-    await (
-      Appointment.updateMany(
-        { doctor: doctorProfile._id, status: "in-progress" },
-        { $set: { status: "completed", queue_status: "COMPLETED" } },
-      ) as any
-    ).unscoped();
+    await Promise.all([
+      (Appointment.updateMany(
+        { doctor: doctorProfile._id, status: { $in: ["in-progress", "In-Progress"] } },
+        { $set: { status: "completed", queue_status: "COMPLETED", consultationEndTime: new Date() } },
+      ) as any).unscoped(),
+      (MobileAppointment.updateMany(
+        { doctor: doctorProfile._id, status: { $in: ["in-progress", "In-Progress"] } },
+        { $set: { status: "Completed", queue_status: "COMPLETED", consultationEndTime: new Date() } },
+      ) as any).unscoped(),
+    ]);
 
     const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
 
-    const nextAppointment = await (
-      Appointment.findOneAndUpdate(
-        {
-          doctor: doctorProfile._id,
-          date: { $gte: startOfDay, $lte: endOfDay },
-          status: { $in: ["confirmed", "waiting"] },
-        },
-        { $set: { status: "in-progress", queue_status: "CURRENT", called_time: new Date() } },
-        { new: true, sort: { timeSlot: 1 } },
-      ) as any
-    )
-      .unscoped()
-      .populate({
-        path: "patient",
-        select: "name email mobile",
-      });
+    const [nextRegular, nextMobile] = await Promise.all([
+      (Appointment.findOne({
+        doctor: doctorProfile._id,
+        date: { $gte: startOfDay, $lte: endOfDay },
+        status: { $in: ["confirmed", "waiting", "Confirmed", "Waiting", "Arrived", "arrived", "Booked", "booked"] },
+      }) as any)
+        .unscoped()
+        .sort({ token_number: 1, appointmentTime: 1, startTime: 1, createdAt: 1 })
+        .populate({ path: "patient", select: "name email mobile" }),
+      (MobileAppointment.findOne({
+        doctor: doctorProfile._id,
+        date: { $gte: startOfDay, $lte: endOfDay },
+        status: { $in: ["confirmed", "waiting", "Confirmed", "Waiting", "Arrived", "arrived", "Booked", "booked"] },
+      }) as any)
+        .unscoped()
+        .sort({ token_number: 1, appointmentTime: 1, startTime: 1, createdAt: 1 })
+        .populate({
+          path: "patient",
+          options: { unscoped: true },
+          populate: { path: "user", options: { unscoped: true }, select: "name email mobile" },
+        }),
+    ]);
+
+    let nextAppointment: any = null;
+    let isMobile = false;
+
+    if (nextRegular && nextMobile) {
+      const tA = parseInt(nextRegular.token_number, 10) || 0;
+      const tB = parseInt(nextMobile.token_number, 10) || 0;
+      if (tA && tB && tA !== tB) {
+        if (tA < tB) {
+          nextAppointment = nextRegular;
+        } else {
+          nextAppointment = nextMobile;
+          isMobile = true;
+        }
+      } else {
+        const timeA = new Date(nextRegular.createdAt || nextRegular.date).getTime();
+        const timeB = new Date(nextMobile.createdAt || nextMobile.date).getTime();
+        if (timeA <= timeB) {
+          nextAppointment = nextRegular;
+        } else {
+          nextAppointment = nextMobile;
+          isMobile = true;
+        }
+      }
+    } else if (nextRegular) {
+      nextAppointment = nextRegular;
+    } else if (nextMobile) {
+      nextAppointment = nextMobile;
+      isMobile = true;
+    }
 
     if (!nextAppointment) {
       // Also emit empty queue update since there are no more patients
       const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
-      if ((req as any).io) {
-        await emitQueueUpdate((req as any).io, doctorProfile._id, doctorProfile.hospital);
+      const { getIO } = await import("../../config/socket.js");
+      const io = (req as any).io || getIO();
+      if (io) {
+        await emitQueueUpdate(io, doctorProfile._id, doctorProfile.hospital);
       }
       return res
         .status(200)
         .json({ message: "No more confirmed appointments for today" });
     }
 
+    // Set active
+    nextAppointment.status = isMobile ? "In-Progress" : "in-progress";
+    nextAppointment.queue_status = "CURRENT";
+    nextAppointment.called_time = new Date();
+    nextAppointment.consultationStartTime = nextAppointment.consultationStartTime || new Date();
+    nextAppointment.isPaused = false;
+    await nextAppointment.save();
+
     const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
-    if ((req as any).io) {
-      await emitQueueUpdate((req as any).io, doctorProfile._id, nextAppointment.hospital);
+    const { getIO } = await import("../../config/socket.js");
+    const io = (req as any).io || getIO();
+    if (io) {
+      const targetHospitalId = nextAppointment.hospital?._id || nextAppointment.hospital || doctorProfile.hospital;
+      await emitQueueUpdate(io, doctorProfile._id, targetHospitalId);
+
+      const patientUserId = (nextAppointment.patient as any)?.user?._id || (nextAppointment.patient as any)?.user || (nextAppointment.patient as any)?._id || nextAppointment.patient;
+      if (patientUserId) {
+        io.to(`patient_${patientUserId}`).emit("consultation_started", {
+          appointmentId: nextAppointment._id,
+          doctorId: doctorProfile._id,
+          status: "in-progress"
+        });
+        io.to(`patient_${patientUserId}`).emit("appointment:status_change", {
+          appointmentId: nextAppointment._id,
+          status: "in-progress"
+        });
+      }
     }
 
     res.status(200).json({
@@ -1875,10 +1953,80 @@ export const getDoctorPatients = async (req: Request, res: Response) => {
       docReq.user!.hospital as unknown as string,
     );
 
-    // Aggregation to find unique patients for this doctor
+    const doctorIds = [doctorProfile._id, userId].filter(Boolean);
+
+    // Aggregation to find unique patients for this doctor across Appointments, Prescriptions, IPD, and Lab Orders
     const pipeline: any[] = [
-      { $match: { doctor: doctorProfile._id } },
-      { $sort: { date: -1, createdAt: -1 } },
+      { $match: { doctor: { $in: doctorIds } } },
+      {
+        $project: {
+          patient: 1,
+          date: { $ifNull: ["$date", "$createdAt"] },
+          reason: 1,
+          type: 1,
+          isIPD: 1,
+        },
+      },
+      {
+        $unionWith: {
+          coll: "prescriptions",
+          pipeline: [
+            { $match: { doctor: { $in: doctorIds } } },
+            {
+              $project: {
+                patient: 1,
+                date: { $ifNull: ["$prescriptionDate", "$createdAt"] },
+                reason: { $literal: "Prescription / Treatment" },
+                type: { $literal: "OPD" },
+                isIPD: { $literal: false },
+              },
+            },
+          ],
+        },
+      },
+      {
+        $unionWith: {
+          coll: "ipdadmissions",
+          pipeline: [
+            {
+              $match: {
+                $or: [
+                  { doctor: { $in: doctorIds } },
+                  { admittingDoctor: { $in: doctorIds } },
+                ],
+              },
+            },
+            {
+              $project: {
+                patient: 1,
+                date: { $ifNull: ["$admissionDate", "$createdAt"] },
+                reason: { $ifNull: ["$diagnosis", "IPD Admission"] },
+                type: { $literal: "IPD" },
+                isIPD: { $literal: true },
+              },
+            },
+          ],
+        },
+      },
+      {
+        $unionWith: {
+          coll: "laborders",
+          pipeline: [
+            { $match: { doctor: { $in: doctorIds } } },
+            {
+              $project: {
+                patient: 1,
+                date: { $ifNull: ["$orderDate", "$createdAt"] },
+                reason: { $literal: "Diagnostic Investigation" },
+                type: { $literal: "OPD" },
+                isIPD: { $literal: false },
+              },
+            },
+          ],
+        },
+      },
+      { $match: { patient: { $exists: true, $ne: null } } },
+      { $sort: { date: -1 } },
       {
         $group: {
           _id: "$patient",
@@ -1896,7 +2044,21 @@ export const getDoctorPatients = async (req: Request, res: Response) => {
           as: "userInfo",
         },
       },
-      { $unwind: "$userInfo" },
+      { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "authUser",
+        },
+      },
+      { $unwind: { path: "$authUser", preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          userInfo: { $ifNull: ["$userInfo", "$authUser"] },
+        },
+      },
       {
         $lookup: {
           from: "patientprofiles",

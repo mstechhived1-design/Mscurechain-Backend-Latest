@@ -182,6 +182,8 @@ export const helpDeskDashboard = asyncHandler(
           {
             status: {
               $in: [
+                "scheduled",
+                "Scheduled",
                 "pending",
                 "Pending",
                 "confirmed",

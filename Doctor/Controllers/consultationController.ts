@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import mongoose from "mongoose";
 import User from "../../Auth/Models/User.js";
 import Appointment from "../../Appointment/Models/Appointment.js";
+import MobileAppointment from "../../Appointment/Models/MobileAppointment.js";
 import Prescription from "../../Prescription/Models/Prescription.js";
 import LabToken from "../../Lab/Models/LabToken.js";
 import LabOrder from "../../Lab/Models/LabOrder.js";
@@ -19,6 +20,92 @@ interface ConsultationRequest extends Request {
   user?: any;
 }
 
+
+// Helper to look up an appointment from either Appointment or MobileAppointment
+async function findConsultationAppointment(appointmentId: string) {
+  const isObjectId = mongoose.Types.ObjectId.isValid(appointmentId);
+  let appointment: any = null;
+  let isMobile = false;
+
+  if (isObjectId) {
+    appointment = await (Appointment.findById(appointmentId) as any)
+      ?.unscoped()
+      ?.populate({
+        path: "patient",
+        select: "name mobile email age ageUnit gender mrn dateOfBirth honorific",
+        options: { unscoped: true },
+      })
+      ?.populate({
+        path: "doctor",
+        select: "name specialization signature medicalRegistrationNumber",
+        options: { unscoped: true },
+      })
+      ?.populate("hospital", "name");
+  }
+
+  if (!appointment) {
+    appointment = await (Appointment.findOne({ appointmentId }) as any)
+      ?.unscoped()
+      ?.populate({
+        path: "patient",
+        select: "name mobile email age ageUnit gender mrn dateOfBirth honorific",
+        options: { unscoped: true },
+      })
+      ?.populate({
+        path: "doctor",
+        select: "name specialization signature medicalRegistrationNumber",
+        options: { unscoped: true },
+      })
+      ?.populate("hospital", "name");
+  }
+
+  if (!appointment && isObjectId) {
+    const mobile = await (MobileAppointment.findById(appointmentId) as any)
+      ?.unscoped()
+      ?.populate({
+        path: "patient",
+        options: { unscoped: true },
+        populate: { path: "user", options: { unscoped: true }, select: "name mobile email age gender mrn dateOfBirth honorific" },
+      })
+      ?.populate({
+        path: "doctor",
+        options: { unscoped: true },
+        select: "name specialization signature medicalRegistrationNumber",
+        populate: { path: "user", options: { unscoped: true }, select: "name" },
+      })
+      ?.populate("hospital", "name");
+
+    if (mobile) {
+      appointment = mobile;
+      isMobile = true;
+    }
+  }
+
+  if (!appointment) {
+    const mobile = await (MobileAppointment.findOne({ appointmentId }) as any)
+      ?.unscoped()
+      ?.populate({
+        path: "patient",
+        options: { unscoped: true },
+        populate: { path: "user", options: { unscoped: true }, select: "name mobile email age gender mrn dateOfBirth honorific" },
+      })
+      ?.populate({
+        path: "doctor",
+        options: { unscoped: true },
+        select: "name specialization signature medicalRegistrationNumber",
+        populate: { path: "user", options: { unscoped: true }, select: "name" },
+      })
+      ?.populate("hospital", "name");
+
+    if (mobile) {
+      appointment = mobile;
+      isMobile = true;
+    }
+  }
+
+  return { appointment, isMobile };
+}
+
 // Start consultation
 export const startConsultation = async (
   req: ConsultationRequest,
@@ -27,25 +114,13 @@ export const startConsultation = async (
   try {
     const { appointmentId } = req.params;
 
-    const appointment = await (Appointment.findById(appointmentId) as any)
-      .unscoped()
-      .populate({
-        path: "patient",
-        select: "name mobile email age ageUnit gender mrn dateOfBirth honorific",
-        options: { unscoped: true },
-      })
-      .populate({
-        path: "doctor",
-        select: "name specialization signature medicalRegistrationNumber",
-        options: { unscoped: true },
-      })
-      .populate("hospital", "name");
+    const { appointment, isMobile } = await findConsultationAppointment(appointmentId);
 
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
 
-    if (appointment.status === "completed") {
+    if (appointment.status === "completed" || appointment.status === "Completed") {
       return res.json({
         success: true,
         message: "Consultation already completed",
@@ -53,47 +128,89 @@ export const startConsultation = async (
       });
     }
 
-      // If it's already in-progress, ensure the start time is set
-      if (appointment.status !== "in-progress") {
-        appointment.status = "in-progress";
-        appointment.queue_status = "CURRENT";
-        appointment.called_time = new Date();
-        appointment.consultationStartTime =
-          appointment.consultationStartTime || new Date();
-        await appointment.save();
+    // If it's already in-progress, ensure the start time is set
+    const currentStatus = (appointment.status || "").toLowerCase();
+    if (currentStatus !== "in-progress") {
+      appointment.status = isMobile ? "In-Progress" : "in-progress";
+      appointment.queue_status = "CURRENT";
+      appointment.called_time = new Date();
+      appointment.isPaused = false;
+      appointment.consultationStartTime =
+        appointment.consultationStartTime || new Date();
+      await appointment.save();
 
-        // Notify helpdesk via WebSocket
-        try {
-          const io = (req as any).io;
-          if (io && appointment.hospital) {
-            const hospitalRoom = `hospital_${appointment.hospital}`;
-            io.to(hospitalRoom).emit("dashboard:update", {
-              message: "Consultation started",
-              appointmentId: appointment._id,
-            });
-          }
-        } catch (wsErr) {
-          console.warn("WebSocket notification error:", wsErr);
-        }
-      } else if (!appointment.consultationStartTime) {
-        appointment.consultationStartTime = new Date();
-        await appointment.save();
-      }
-
-      // Safely emit queue update to TV handler if available
+      // Notify helpdesk via WebSocket
       try {
-        const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
-        if ((req as any).io) {
-          await emitQueueUpdate((req as any).io, appointment.doctor, appointment.hospital);
+        const { getIO } = await import("../../config/socket.js");
+        const io = (req as any).io || getIO();
+        const hospId = appointment.hospital?._id || appointment.hospital;
+        if (io && hospId) {
+          const hospitalRoom = `hospital_${hospId}`;
+          io.to(hospitalRoom).emit("dashboard:update", {
+            message: "Consultation started",
+            appointmentId: appointment._id,
+          });
         }
-      } catch (tvErr) {
-        console.warn("TV socket handler update skipped/failed:", tvErr);
+      } catch (wsErr) {
+        console.warn("WebSocket notification error:", wsErr);
       }
+    } else if (!appointment.consultationStartTime) {
+      appointment.consultationStartTime = new Date();
+      appointment.isPaused = false;
+      await appointment.save();
+    }
+
+    // Safely emit queue update to TV handler and patient sockets
+    try {
+      const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
+      const { getIO } = await import("../../config/socket.js");
+      const io = (req as any).io || getIO();
+      if (io) {
+        const docId = appointment.doctor?._id || appointment.doctor;
+        const hospId = appointment.hospital?._id || appointment.hospital;
+        await emitQueueUpdate(io, docId, hospId);
+
+        const patientUserId = (appointment.patient as any)?.user?._id || (appointment.patient as any)?._id || appointment.patient;
+        if (patientUserId) {
+          io.to(`patient_${patientUserId}`).emit("consultation_started", {
+            appointmentId: appointment._id,
+            doctorId: docId,
+            status: "in-progress"
+          });
+          io.to(`patient_${patientUserId}`).emit("appointment:status_change", {
+            appointmentId: appointment._id,
+            status: "in-progress"
+          });
+        }
+
+        if (hospId) {
+          io.to(`hospital_${hospId}`).emit("appointment_status_changed", {
+            appointmentId: appointment._id,
+            status: "in-progress"
+          });
+          io.to(`hospital_${hospId}`).emit("consultation_started", {
+            appointmentId: appointment._id,
+            doctorId: docId,
+            status: "in-progress"
+          });
+          io.to(`hospital_${hospId}`).emit("dashboard:update", { hospitalId: hospId });
+        }
+
+        // Broadcast to general channels
+        io.emit("queue_update", { doctorId: docId, hospitalId: hospId });
+        io.emit("consultation_started", { appointmentId: appointment._id, doctorId: docId, status: "in-progress" });
+        io.emit("appointment_status_changed", { appointmentId: appointment._id, status: "in-progress" });
+        io.emit("appointment:status_change", { appointmentId: appointment._id, status: "in-progress" });
+        io.emit("dashboard:update", { hospitalId: hospId });
+      }
+    } catch (tvErr) {
+      console.warn("TV socket handler update skipped/failed:", tvErr);
+    }
 
     // Enrich with patient profile data
     let profile: any = null;
     try {
-      const patientId = (appointment.patient as any)?._id || appointment.patient;
+      const patientId = (appointment.patient as any)?.user?._id || (appointment.patient as any)?._id || appointment.patient;
       if (patientId) {
         profile = await PatientProfile.findOne({ user: patientId });
         if (!profile && mongoose.connection.db) {
@@ -103,11 +220,20 @@ export const startConsultation = async (
           profile = rawProfile as any;
         }
       }
+      if (!profile && (appointment.patient as any)?.user) {
+        profile = appointment.patient;
+      }
     } catch (profErr) {
       console.warn("Error fetching patient profile:", profErr);
     }
 
     const patientData: any = appointment.patient ? JSON.parse(JSON.stringify(appointment.patient)) : {};
+    if (patientData.user && typeof patientData.user === "object") {
+      patientData._id = patientData.user._id || patientData._id;
+      patientData.name = patientData.user.name || patientData.name;
+      patientData.mobile = patientData.user.mobile || patientData.mobile;
+      patientData.email = patientData.user.email || patientData.email;
+    }
 
     if (profile) {
       patientData.age = appointment.patientDetails?.age || profile.age || patientData.age;
@@ -288,9 +414,10 @@ export const saveConsultationDraft = async (
     const { appointmentId } = req.params;
     const { diagnosis, clinicalNotes, plan } = req.body;
 
-    const appointment = await (
-      Appointment.findById(appointmentId) as any
-    ).unscoped();
+    let appointment = await (Appointment.findById(appointmentId) as any)?.unscoped();
+    if (!appointment) {
+      appointment = await (MobileAppointment.findById(appointmentId) as any)?.unscoped();
+    }
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
@@ -320,17 +447,31 @@ export const endConsultation = async (
   try {
     const { appointmentId } = req.params;
     const { duration, diagnosis, clinicalNotes, plan } = req.body;
+    const isObjectId = mongoose.Types.ObjectId.isValid(appointmentId);
 
-    const appointment = await (
-      Appointment.findById(appointmentId) as any
-    ).unscoped();
+    let appointment = isObjectId
+      ? await (Appointment.findById(appointmentId) as any)?.unscoped()
+      : null;
+    if (!appointment) {
+      appointment = await (Appointment.findOne({ appointmentId }) as any)?.unscoped();
+    }
+    let isMobile = false;
+    if (!appointment && isObjectId) {
+      appointment = await (MobileAppointment.findById(appointmentId) as any)?.unscoped();
+      if (appointment) isMobile = true;
+    }
+    if (!appointment) {
+      appointment = await (MobileAppointment.findOne({ appointmentId }) as any)?.unscoped();
+      if (appointment) isMobile = true;
+    }
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
 
     // Update appointment
-    appointment.status = "completed";
+    appointment.status = isMobile ? "Completed" : "completed";
     appointment.queue_status = "COMPLETED";
+    appointment.isPaused = false;
     appointment.consultationEndTime = new Date();
     appointment.consultationDuration = duration || 0;
     if (diagnosis) appointment.diagnosis = diagnosis;
@@ -340,38 +481,84 @@ export const endConsultation = async (
     await appointment.save();
 
     const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
-    if ((req as any).io) {
-      await emitQueueUpdate((req as any).io, appointment.doctor, appointment.hospital);
+    const { getIO } = await import("../../config/socket.js");
+    const io = (req as any).io || getIO();
+    const docId = appointment.doctor?._id || appointment.doctor;
+    const hospId = appointment.hospital?._id || appointment.hospital;
+
+    if (io) {
+      await emitQueueUpdate(io, docId, hospId);
     }
 
-    // Emit Socket Event for Dashboard Update
-    const populatedAppt = await (Appointment.findById(appointmentId) as any)
-      .unscoped()
-      .populate({
-        path: "doctor",
-        options: { unscoped: true },
-        populate: { path: "user", options: { unscoped: true } },
-      })
-      .populate("hospital");
+    // Emit Socket Event for Dashboard & Patient Update
+    let populatedAppt: any = null;
+    if (isMobile) {
+      populatedAppt = await (MobileAppointment.findById(appointment._id) as any)
+        ?.unscoped()
+        ?.populate({
+          path: "doctor",
+          options: { unscoped: true },
+          populate: { path: "user", options: { unscoped: true } },
+        })
+        ?.populate("hospital")
+        ?.populate({
+          path: "patient",
+          options: { unscoped: true },
+          populate: { path: "user", options: { unscoped: true } },
+        });
+    } else {
+      populatedAppt = await (Appointment.findById(appointment._id) as any)
+        ?.unscoped()
+        ?.populate({
+          path: "doctor",
+          options: { unscoped: true },
+          populate: { path: "user", options: { unscoped: true } },
+        })
+        ?.populate("hospital")
+        ?.populate("patient");
+    }
 
-    const io = (req as any).io;
-    if (io && populatedAppt && populatedAppt.doctor) {
-      const doctorUserId = (populatedAppt.doctor as any).user?._id;
+    if (io) {
+      const patientUserId = (populatedAppt?.patient as any)?.user?._id || (populatedAppt?.patient as any)?._id || (appointment.patient as any)?._id || appointment.patient;
+      const doctorUserId = (populatedAppt?.doctor as any)?.user?._id;
+      const targetHospitalId = populatedAppt?.hospital?._id || populatedAppt?.hospital || hospId;
+
       if (doctorUserId) {
         io.to(`doctor_${doctorUserId}`).emit("dashboard:update", {
           message: "Consultation completed",
-          appointmentId,
+          appointmentId: appointment._id,
         });
       }
 
-      // Also Notify helpdesk via hospital room
-      if (populatedAppt.hospital) {
-        const hospitalRoom = `hospital_${populatedAppt.hospital._id || populatedAppt.hospital}`;
+      if (targetHospitalId) {
+        const hospitalRoom = `hospital_${targetHospitalId}`;
         io.to(hospitalRoom).emit("dashboard:update", {
           message: "Consultation completed",
-          appointmentId,
+          appointmentId: appointment._id,
         });
       }
+
+      if (patientUserId) {
+        io.to(`patient_${patientUserId}`).emit("appointment_completed", {
+          appointmentId: appointment._id,
+          status: "completed",
+        });
+        io.to(`patient_${patientUserId}`).emit("appointment:status_change", {
+          appointmentId: appointment._id,
+          status: "completed",
+        });
+        io.to(`user_${patientUserId}`).emit("appointment_completed", {
+          appointmentId: appointment._id,
+          status: "completed",
+        });
+      }
+
+      io.emit("appointment_status_changed", {
+        appointmentId: appointment._id,
+        status: "completed",
+        doctorId: docId,
+        hospitalId: targetHospitalId,
+      });
     }
 
     // Fetch prescriptions and lab tokens for this appointment
@@ -401,14 +588,7 @@ export const getConsultationSummary = async (
   try {
     const { appointmentId } = req.params;
 
-    const appointment = await (Appointment.findById(appointmentId) as any)
-      .unscoped()
-      .populate("patient", "name mobile email age ageUnit gender mrn dateOfBirth honorific")
-      .populate(
-        "doctor",
-        "name specialization signature medicalRegistrationNumber",
-      )
-      .populate("hospital", "name");
+    const { appointment, isMobile } = await findConsultationAppointment(appointmentId);
 
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
@@ -731,16 +911,29 @@ export const pauseConsultation = async (
 ) => {
   try {
     const { appointmentId } = req.params;
-    const doctorId = req.user?._id;
+    const { pauseReason } = req.body;
+    const isObjectId = mongoose.Types.ObjectId.isValid(appointmentId);
 
-    const appointment = await (
-      Appointment.findById(appointmentId) as any
-    ).unscoped();
+    let appointment = isObjectId
+      ? await (Appointment.findById(appointmentId) as any)?.unscoped()
+      : null;
+    if (!appointment) {
+      appointment = await (Appointment.findOne({ appointmentId }) as any)?.unscoped();
+    }
+    let isMobile = false;
+    if (!appointment && isObjectId) {
+      appointment = await (MobileAppointment.findById(appointmentId) as any)?.unscoped();
+      if (appointment) isMobile = true;
+    }
+    if (!appointment) {
+      appointment = await (MobileAppointment.findOne({ appointmentId }) as any)?.unscoped();
+      if (appointment) isMobile = true;
+    }
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
 
-    if (appointment.status !== "in-progress") {
+    if (!["in-progress", "In-Progress"].includes(appointment.status)) {
       return res
         .status(400)
         .json({ message: "Only in-progress consultations can be paused" });
@@ -749,11 +942,42 @@ export const pauseConsultation = async (
     // Mark as paused
     appointment.isPaused = true;
     appointment.pausedAt = new Date();
+    appointment.queue_status = "PAUSED";
     await appointment.save();
 
     const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
-    if ((req as any).io) {
-      await emitQueueUpdate((req as any).io, appointment.doctor, appointment.hospital);
+    const { getIO } = await import("../../config/socket.js");
+    const io = (req as any).io || getIO();
+    const docId = appointment.doctor?._id || appointment.doctor;
+    const hospId = appointment.hospital?._id || appointment.hospital;
+
+    if (io) {
+      await emitQueueUpdate(io, docId, hospId);
+      const patientUserId = (appointment.patient as any)?.user?._id || (appointment.patient as any)?.user || (appointment.patient as any)?._id || appointment.patient;
+      if (patientUserId) {
+        io.to(`patient_${patientUserId}`).emit("consultation_paused", {
+          appointmentId: appointment._id,
+          doctorId: docId,
+          isPaused: true,
+          status: "paused",
+        });
+        io.to(`patient_${patientUserId}`).emit("appointment:status_change", {
+          appointmentId: appointment._id,
+          status: "paused",
+          isPaused: true,
+        });
+      }
+      io.emit("consultation_paused", {
+        appointmentId: appointment._id,
+        doctorId: docId,
+        isPaused: true,
+      });
+      if (hospId) {
+        io.to(`hospital_${hospId}`).emit("dashboard:update", {
+          message: "Consultation paused",
+          appointmentId: appointment._id,
+        });
+      }
     }
 
     res.json({
@@ -774,11 +998,23 @@ export const resumeConsultation = async (
 ) => {
   try {
     const { appointmentId } = req.params;
-    const doctorId = req.user?._id;
+    const isObjectId = mongoose.Types.ObjectId.isValid(appointmentId);
 
-    const appointment = await (
-      Appointment.findById(appointmentId) as any
-    ).unscoped();
+    let appointment = isObjectId
+      ? await (Appointment.findById(appointmentId) as any)?.unscoped()
+      : null;
+    if (!appointment) {
+      appointment = await (Appointment.findOne({ appointmentId }) as any)?.unscoped();
+    }
+    let isMobile = false;
+    if (!appointment && isObjectId) {
+      appointment = await (MobileAppointment.findById(appointmentId) as any)?.unscoped();
+      if (appointment) isMobile = true;
+    }
+    if (!appointment) {
+      appointment = await (MobileAppointment.findOne({ appointmentId }) as any)?.unscoped();
+      if (appointment) isMobile = true;
+    }
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }
@@ -790,7 +1026,7 @@ export const resumeConsultation = async (
     // Calculate the paused duration and add to total
     if (appointment.pausedAt) {
       const pausedDuration = Math.floor(
-        (Date.now() - appointment.pausedAt.getTime()) / 1000,
+        (Date.now() - new Date(appointment.pausedAt).getTime()) / 1000,
       );
       appointment.pausedDuration =
         (appointment.pausedDuration || 0) + pausedDuration;
@@ -800,11 +1036,42 @@ export const resumeConsultation = async (
     appointment.isPaused = false;
     appointment.pausedAt = null;
     appointment.resumedAt = new Date();
+    appointment.queue_status = "CURRENT";
     await appointment.save();
 
     const { emitQueueUpdate } = await import("../../config/tvSocketHandler.js");
-    if ((req as any).io) {
-      await emitQueueUpdate((req as any).io, appointment.doctor, appointment.hospital);
+    const { getIO } = await import("../../config/socket.js");
+    const io = (req as any).io || getIO();
+    const docId = appointment.doctor?._id || appointment.doctor;
+    const hospId = appointment.hospital?._id || appointment.hospital;
+
+    if (io) {
+      await emitQueueUpdate(io, docId, hospId);
+      const patientUserId = (appointment.patient as any)?.user?._id || (appointment.patient as any)?.user || (appointment.patient as any)?._id || appointment.patient;
+      if (patientUserId) {
+        io.to(`patient_${patientUserId}`).emit("consultation_resumed", {
+          appointmentId: appointment._id,
+          doctorId: docId,
+          isPaused: false,
+          status: "in-progress",
+        });
+        io.to(`patient_${patientUserId}`).emit("appointment:status_change", {
+          appointmentId: appointment._id,
+          status: "in-progress",
+          isPaused: false,
+        });
+      }
+      io.emit("consultation_resumed", {
+        appointmentId: appointment._id,
+        doctorId: docId,
+        isPaused: false,
+      });
+      if (hospId) {
+        io.to(`hospital_${hospId}`).emit("dashboard:update", {
+          message: "Consultation resumed",
+          appointmentId: appointment._id,
+        });
+      }
     }
 
     res.json({
@@ -834,37 +1101,70 @@ export const getPausedAppointments = async (
       return res.status(404).json({ message: "Doctor profile not found" });
     }
 
-    // Get all paused appointments for this doctor
-    const appointments = await Appointment.find({
-      doctor: doctorProfile._id,
-      isPaused: true,
-      status: "in-progress",
-    })
-      .populate("patient", "name mobile email age gender mrn")
-      .populate("hospital", "name")
-      .sort({ pausedAt: -1 });
+    // Get all paused appointments for this doctor across both Appointment and MobileAppointment
+    const [regularPaused, mobilePaused] = await Promise.all([
+      Appointment.find({
+        doctor: doctorProfile._id,
+        isPaused: true,
+        status: { $in: ["in-progress", "In-Progress"] },
+      })
+        .populate("patient", "name mobile email age gender mrn")
+        .populate("hospital", "name")
+        .sort({ pausedAt: -1 })
+        .lean(),
+      (MobileAppointment.find({
+        doctor: doctorProfile._id,
+        isPaused: true,
+        status: { $in: ["in-progress", "In-Progress"] },
+      }) as any)
+        .unscoped()
+        .populate({
+          path: "patient",
+          options: { unscoped: true },
+          populate: { path: "user", options: { unscoped: true }, select: "name mobile email age gender mrn" }
+        })
+        .populate("hospital", "name")
+        .sort({ pausedAt: -1 })
+        .lean(),
+    ]);
 
-    // Enrich with profile data
+    const normalizedMobilePaused = (mobilePaused || []).map((m: any) => ({
+      ...m,
+      patient: {
+        _id: m.patient?.user?._id || m.patient?.user || m.patient?._id,
+        name: m.patient?.user?.name || m.patient?.name || "Patient",
+        mobile: m.patient?.user?.mobile || m.patient?.mobile || "N/A",
+        email: m.patient?.user?.email || m.patient?.email || "",
+        age: m.patient?.user?.age || m.patient?.age,
+        gender: m.patient?.user?.gender || m.patient?.gender,
+        mrn: m.mrn || m.patient?.mrn || "N/A",
+      },
+      isMobile: true,
+    }));
+
     const enrichedAppointments = await Promise.all(
-      appointments.map(async (appointment) => {
-        const profile = await (
-          PatientProfile.findOne({
-            user: (appointment.patient as any)?._id,
-          }) as any
-        ).unscoped();
-        const patientData: any = JSON.parse(
-          JSON.stringify(appointment.patient),
+      [...(regularPaused || []), ...normalizedMobilePaused].map(async (appointment: any) => {
+        let patientData: any = JSON.parse(
+          JSON.stringify(appointment.patient || {}),
         );
+        const patientUserId = patientData._id;
+        if (patientUserId) {
+          const profile = await (
+            PatientProfile.findOne({
+              user: patientUserId,
+            }) as any
+          )?.unscoped();
 
-        if (profile) {
-          patientData.mrn = appointment.mrn || profile.mrn || "N/A";
-          patientData.age = appointment.patientDetails?.age || profile.age;
-          patientData.gender =
-            appointment.patientDetails?.gender || profile.gender;
+          if (profile) {
+            patientData.mrn = appointment.mrn || profile.mrn || patientData.mrn || "N/A";
+            patientData.age = appointment.patientDetails?.age || profile.age || patientData.age;
+            patientData.gender =
+              appointment.patientDetails?.gender || profile.gender || patientData.gender;
+          }
         }
 
         return {
-          ...appointment.toObject(),
+          ...appointment,
           patient: patientData,
         };
       }),
@@ -888,9 +1188,14 @@ export const deleteAppointment = async (
   try {
     const { appointmentId } = req.params;
 
-    const appointment = await (
+    let appointment = await (
       Appointment.findByIdAndDelete(appointmentId) as any
-    ).unscoped();
+    )?.unscoped();
+    if (!appointment) {
+      appointment = await (
+        MobileAppointment.findByIdAndDelete(appointmentId) as any
+      )?.unscoped();
+    }
     if (!appointment) {
       return res.status(404).json({ message: "Appointment not found" });
     }

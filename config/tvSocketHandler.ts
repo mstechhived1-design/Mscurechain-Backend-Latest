@@ -92,50 +92,115 @@ export const registerTVSocketHandlers = (io: Server) => {
 };
 
 import Appointment from "../Appointment/Models/Appointment.js";
+import MobileAppointment from "../Appointment/Models/MobileAppointment.js";
 import PatientProfile from "../Patient/Models/PatientProfile.js";
 import DoctorProfile from "../Doctor/Models/DoctorProfile.js";
 import mongoose from "mongoose";
 
 export const emitQueueUpdate = async (ioOrSocket: Server | Socket, doctorId: mongoose.Types.ObjectId | string, hospitalId: mongoose.Types.ObjectId | string) => {
   try {
-    const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+    const { getIO } = await import("./socket.js");
+    const io: any = ioOrSocket || getIO();
+    if (!io) {
+      logger.warn("[TV Socket] No Socket.IO instance available for emitQueueUpdate");
+      return;
+    }
 
-    // Get current appointment
-    const currentAppointment = await (Appointment.findOne({
-      doctor: doctorId,
+    const cleanDoctorId = (doctorId as any)?._id ? (doctorId as any)._id : doctorId;
+    const cleanHospitalId = (hospitalId as any)?._id ? (hospitalId as any)._id : hospitalId;
+    const docIdStr = cleanDoctorId?.toString();
+    const hospIdStr = cleanHospitalId?.toString();
+
+    const today = new Date();
+    const startOfDay = new Date(today);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // 1. Get current appointment (today or currently active in-progress for this doctor)
+    let currentAppointment = await (Appointment.findOne({
+      doctor: cleanDoctorId,
       date: { $gte: startOfDay, $lte: endOfDay },
-      status: "in-progress"
+      status: { $in: ["in-progress", "In-Progress"] }
     }) as any).unscoped().populate({
       path: "patient",
       select: "name",
       options: { unscoped: true }
     });
 
-    // Get next appointment
-    const nextAppointment = await (Appointment.findOne({
-      doctor: doctorId,
+    if (!currentAppointment) {
+      currentAppointment = await (MobileAppointment.findOne({
+        doctor: cleanDoctorId,
+        date: { $gte: startOfDay, $lte: endOfDay },
+        status: { $in: ["in-progress", "In-Progress"] }
+      }) as any).unscoped().populate({
+        path: "patient",
+        options: { unscoped: true },
+        populate: { path: "user", options: { unscoped: true }, select: "name" }
+      });
+    }
+
+    // Fallback: check across all dates for in-progress appointment
+    if (!currentAppointment) {
+      currentAppointment = await (Appointment.findOne({
+        doctor: cleanDoctorId,
+        status: { $in: ["in-progress", "In-Progress"] }
+      }) as any).unscoped().sort({ updatedAt: -1 }).populate({
+        path: "patient",
+        select: "name",
+        options: { unscoped: true }
+      });
+    }
+
+    if (!currentAppointment) {
+      currentAppointment = await (MobileAppointment.findOne({
+        doctor: cleanDoctorId,
+        status: { $in: ["in-progress", "In-Progress"] }
+      }) as any).unscoped().sort({ updatedAt: -1 }).populate({
+        path: "patient",
+        options: { unscoped: true },
+        populate: { path: "user", options: { unscoped: true }, select: "name" }
+      });
+    }
+
+    // 2. Get next appointment
+    const waitingStatuses = ["confirmed", "waiting", "Confirmed", "Waiting", "Arrived", "arrived", "booked", "Booked", "scheduled"];
+    let nextAppointment = await (Appointment.findOne({
+      doctor: cleanDoctorId,
       date: { $gte: startOfDay, $lte: endOfDay },
-      status: { $in: ["confirmed", "waiting"] }
-    }) as any).unscoped().sort({ appointmentTime: 1, startTime: 1, createdAt: 1 }).populate({
+      status: { $in: waitingStatuses }
+    }) as any).unscoped().sort({ token_number: 1, appointmentTime: 1, startTime: 1, createdAt: 1 }).populate({
       path: "patient",
       select: "name",
       options: { unscoped: true }
     });
 
-    const doctorProfile = await (DoctorProfile.findById(doctorId) as any).unscoped().populate({
+    if (!nextAppointment) {
+      nextAppointment = await (MobileAppointment.findOne({
+        doctor: cleanDoctorId,
+        date: { $gte: startOfDay, $lte: endOfDay },
+        status: { $in: waitingStatuses }
+      }) as any).unscoped().sort({ token_number: 1, appointmentTime: 1, startTime: 1, createdAt: 1 }).populate({
+        path: "patient",
+        options: { unscoped: true },
+        populate: { path: "user", options: { unscoped: true }, select: "name" }
+      });
+    }
+
+    const doctorProfile = await (DoctorProfile.findById(cleanDoctorId) as any).unscoped().populate({
       path: "user",
       select: "name",
       options: { unscoped: true }
     });
 
     const payload = {
-      doctorId,
+      doctorId: docIdStr,
       doctorName: (doctorProfile?.user as any)?.name || "Doctor",
       currentPatient: currentAppointment ? {
+        id: currentAppointment._id?.toString(),
+        appointmentId: currentAppointment.appointmentId,
         token: currentAppointment.token_number || "N/A",
-        name: (currentAppointment.patient as any)?.name || "Patient",
+        name: (currentAppointment.patient as any)?.user?.name || (currentAppointment.patient as any)?.name || "Patient",
         time: currentAppointment.appointmentTime || currentAppointment.startTime || "N/A",
         consultationStartTime: currentAppointment.consultationStartTime || currentAppointment.called_time || null,
         isPaused: Boolean(currentAppointment.isPaused),
@@ -143,22 +208,45 @@ export const emitQueueUpdate = async (ioOrSocket: Server | Socket, doctorId: mon
         pausedDuration: currentAppointment.pausedDuration || 0,
       } : null,
       nextPatient: nextAppointment ? {
+        id: nextAppointment._id?.toString(),
+        appointmentId: nextAppointment.appointmentId,
         token: nextAppointment.token_number || "N/A",
-        name: (nextAppointment.patient as any)?.name || "Patient",
+        name: (nextAppointment.patient as any)?.user?.name || (nextAppointment.patient as any)?.name || "Patient",
         time: nextAppointment.appointmentTime || nextAppointment.startTime || "N/A"
-      } : null
+      } : null,
+      lastUpdated: new Date().toISOString(),
     };
 
-    if ('of' in ioOrSocket) {
-      // It's a Server object
-      ioOrSocket.of("/tv-display").to(`hospital_${hospitalId.toString()}`).emit("queue_update", payload);
-      // Also broadcast to standard namespace for patient mobile app real-time token tracking
-      ioOrSocket.to(`hospital_${hospitalId.toString()}`).emit("queue_update", payload);
-      ioOrSocket.emit("queue_update", payload);
-      ioOrSocket.emit(`queue_update_${doctorId.toString()}`, payload);
+    if ('of' in io) {
+      // 1. TV Display Namespace
+      if (hospIdStr) {
+        io.of("/tv-display").to(`hospital_${hospIdStr}`).emit("queue_update", payload);
+        io.to(`hospital_${hospIdStr}`).emit("queue_update", payload);
+      }
+      // 2. Broadcast to all mobile patient apps on root namespace
+      io.emit("queue_update", payload);
+      if (docIdStr) {
+        io.emit(`queue_update_${docIdStr}`, payload);
+      }
+      io.emit("queue_updated", payload);
+
+      // 3. Directly notify the patient's private rooms
+      if (currentAppointment?.patient) {
+        const patientUserId = (currentAppointment.patient as any)?.user?._id || (currentAppointment.patient as any)?.user || (currentAppointment.patient as any)?._id;
+        if (patientUserId) {
+          io.to(`patient_${patientUserId}`).emit("queue_update", payload);
+          io.to(`user_${patientUserId}`).emit("queue_update", payload);
+        }
+      }
+      if (nextAppointment?.patient) {
+        const nextPatientUserId = (nextAppointment.patient as any)?.user?._id || (nextAppointment.patient as any)?.user || (nextAppointment.patient as any)?._id;
+        if (nextPatientUserId) {
+          io.to(`patient_${nextPatientUserId}`).emit("queue_update", payload);
+          io.to(`user_${nextPatientUserId}`).emit("queue_update", payload);
+        }
+      }
     } else {
-      // It's a Socket object
-      ioOrSocket.emit("queue_update", payload);
+      io.emit("queue_update", payload);
     }
   } catch (err) {
     logger.error(`[TV Socket] Error emitting queue update: ${err}`);

@@ -8,6 +8,7 @@ import User from "../Models/User.js";
 import SuperAdmin from "../Models/SuperAdmin.js";
 import Patient from "../../Patient/Models/Patient.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
+import Hospital from "../../Hospital/Models/Hospital.js";
 import AuthLog from "../Models/AuthLog.js";
 import { AuthRequest, IUser } from "../types/index.js";
 import redisService from "../../config/redis.js";
@@ -112,7 +113,7 @@ export const register = async (req: Request, res: Response) => {
   if (!errors.isEmpty())
     return res.status(422).json({ errors: errors.array() });
 
-  const { name, mobile, email, password, otp, consentGiven, role, hospitalId, platform } =
+  const { name, mobile, email, password, otp, consentGiven, role, hospitalId, platform, gender, dob, age, fatherName, address, honorific } =
     req.body;
 
   const requestedRole = (role || "patient").toLowerCase().trim();
@@ -155,32 +156,117 @@ export const register = async (req: Request, res: Response) => {
 
     let user: any;
     if (finalRole === "patient") {
-      user = await (Patient.findOne({
-        mobile,
-        name: { $regex: new RegExp(`^${name}$`, "i") },
-      }) as any).unscoped();
+      const normalizedEmail = email && typeof email === "string" && email.trim() !== ""
+        ? email.trim().toLowerCase()
+        : undefined;
 
-      if (user) {
-        if (!(user as any).hospitals) (user as any).hospitals = [];
-        if (hospitalId && !(user as any).hospitals.some((h: any) => h.toString() === hospitalId.toString())) {
-          (user as any).hospitals.push(hospitalId);
+      // 1. Check if email is already in use
+      if (normalizedEmail) {
+        const existingStaffEmail = await (User.findOne({ email: normalizedEmail }) as any).unscoped();
+        if (existingStaffEmail) {
+          return res.status(400).json({
+            message: "This email address is already registered. Please use another email or log in.",
+          });
         }
-        if (email && !user.email) user.email = email.toLowerCase();
-        await user.save();
-      } else {
-        user = await Patient.create({
-          name,
-          mobile,
-          email: email?.toLowerCase(),
-          password: hashedPwd,
-          role: "patient",
-          hospitals: hospitalId ? [hospitalId] : [],
-          status: "active",
-        });
+
+        const existingPatientWithEmail = await (Patient.findOne({ email: normalizedEmail }) as any).unscoped();
+        if (existingPatientWithEmail) {
+          const isSameExact =
+            existingPatientWithEmail.mobile === mobile &&
+            existingPatientWithEmail.name?.trim().toLowerCase() === name.trim().toLowerCase();
+          if (isSameExact) {
+            return res.status(400).json({
+              message: "An account with these details already exists. Please log in directly.",
+            });
+          }
+          return res.status(400).json({
+            message: "This email address is already registered to another patient. Please use a different email or log in.",
+          });
+        }
       }
 
+      // 2. Check if identical patient already exists with same mobile + same name + same DOB/gender
+      const existingPatientsWithMobile = await (Patient.find({ mobile }) as any).unscoped();
+      if (existingPatientsWithMobile && existingPatientsWithMobile.length > 0) {
+        const normalizeDob = (d: any) => {
+          if (!d) return "";
+          if (typeof d === "string") {
+            const clean = d.trim();
+            if (clean.includes("/")) {
+              const parts = clean.split("/");
+              if (parts.length === 3) {
+                if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+                if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, "0")}-${parts[2].padStart(2, "0")}`;
+              }
+            }
+            return clean.split("T")[0];
+          }
+          if (d instanceof Date && !isNaN(d.getTime())) {
+            return d.toISOString().split("T")[0];
+          }
+          return "";
+        };
+
+        const targetDob = normalizeDob(dob);
+        const targetGender = gender ? gender.trim().toLowerCase() : "";
+        const targetName = name.trim().toLowerCase();
+
+        const duplicatePatient = existingPatientsWithMobile.find((p: any) => {
+          const pName = p.name ? p.name.trim().toLowerCase() : "";
+          if (pName !== targetName) {
+            // Different name -> Family member sharing the same mobile number (ALLOWED)
+            return false;
+          }
+
+          // Same name: verify if DOB or Gender also match
+          const pDob = normalizeDob(p.dob || p.dateOfBirth);
+          const pGender = p.gender ? p.gender.trim().toLowerCase() : "";
+
+          const dobMatches = targetDob && pDob && targetDob === pDob;
+          const genderMatches = targetGender && pGender && targetGender === pGender;
+
+          if (dobMatches || genderMatches) {
+            return true;
+          }
+
+          if (!targetDob && !pDob) {
+            return true;
+          }
+
+          return false;
+        });
+
+        if (duplicatePatient) {
+          return res.status(400).json({
+            message: "An account with these details (name and mobile) already exists. Please log in directly.",
+          });
+        }
+      }
+
+      // Family member with same mobile but different name, dob, or gender is ACCEPTED
+      const parsedDob = dob ? new Date(dob.includes("/") ? dob.split("/").reverse().join("-") : dob) : undefined;
+
+      user = await Patient.create({
+        name: name.trim(),
+        mobile: mobile.trim(),
+        email: normalizedEmail || undefined,
+        password: hashedPwd,
+        role: "patient",
+        gender: gender || undefined,
+        dob: dob || undefined,
+        dateOfBirth: parsedDob && !isNaN(parsedDob.getTime()) ? parsedDob : undefined,
+        age: age !== undefined ? age : undefined,
+        address: address?.trim() || undefined,
+        fatherName: fatherName?.trim() || undefined,
+        GuardianName: fatherName?.trim() || undefined,
+        guardianName: fatherName?.trim() || undefined,
+        honorific: honorific || undefined,
+        hospitals: hospitalId ? [hospitalId] : [],
+        status: "active",
+      });
+
       if (hospitalId) {
-        // Check if profile exists for this hospital
+        // Only if a specific hospital is provided (e.g. walk-in or hospital-specific registration)
         const existingProfile = await (PatientProfile.findOne({
           user: user._id,
           hospital: hospitalId,
@@ -190,6 +276,12 @@ export const register = async (req: Request, res: Response) => {
           await PatientProfile.create({
             user: user._id,
             hospital: hospitalId,
+            gender: gender ? (gender.toLowerCase() === 'male' || gender.toLowerCase() === 'female' ? gender.toLowerCase() : 'other') : undefined,
+            dob: parsedDob && !isNaN(parsedDob.getTime()) ? parsedDob : undefined,
+            age: age !== undefined ? age : undefined,
+            address: address?.trim() || undefined,
+            GuardianName: fatherName?.trim() || undefined,
+            honorific: honorific || undefined,
           });
         }
 
@@ -249,6 +341,21 @@ export const register = async (req: Request, res: Response) => {
     res.status(201).json(responseData);
   } catch (err: any) {
     logError("Registration Error", err);
+    if (err.code === 11000 || err.message?.includes("E11000")) {
+      if (err.keyPattern?.email || err.message?.includes("email")) {
+        return res.status(400).json({
+          message: "This email address is already registered. Please use another email or log in.",
+        });
+      }
+      if (err.keyPattern?.mobile || err.message?.includes("mobile")) {
+        return res.status(400).json({
+          message: "This mobile number is already registered.",
+        });
+      }
+      return res.status(400).json({
+        message: "An account with these details already exists. Please log in directly.",
+      });
+    }
     res.status(500).json({ message: "Server error during registration" });
   }
 };
