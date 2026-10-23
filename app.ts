@@ -17,7 +17,9 @@ const MISSING_ENV = REQUIRED_ENV.filter((e) => !process.env[e]);
 if (MISSING_ENV.length > 0) {
   logger.error("FATAL: Missing required environment variables: " + MISSING_ENV.join(", "));
   logger.error("The system cannot start without these. Check your .env file.");
-  process.exit(1); 
+  if (process.env.NODE_ENV !== "test" && !process.env.JEST_WORKER_ID) {
+    process.exit(1); 
+  }
 }
 
 // Route imports

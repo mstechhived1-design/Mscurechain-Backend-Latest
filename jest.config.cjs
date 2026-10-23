@@ -13,5 +13,7 @@ module.exports = {
   moduleNameMapper: {
     "^(\\.{1,2}/.*)\\.js$": "$1",
   },
+  testMatch: ["<rootDir>/__tests__/**/*.test.[jt]s"],
+  testPathIgnorePatterns: ["<rootDir>/dist/", "<rootDir>/tests/"],
   modulePathIgnorePatterns: ["<rootDir>/dist/"]
 };

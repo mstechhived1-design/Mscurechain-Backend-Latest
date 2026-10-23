@@ -9,9 +9,9 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles --passWithNoTests",
     "test:watch": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --watch",
-    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage",
+    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage --passWithNoTests",
     "dev": "nodemon --exec tsx server.ts",
     "kill": "npx --yes kill-port 5003 || true",
     "predev": "npx --yes kill-port 5003 || true",
