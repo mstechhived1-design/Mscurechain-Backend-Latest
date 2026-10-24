@@ -58,6 +58,7 @@ export const getOPDFinalBill = async (req: Request, res: Response) => {
       dob: (patientProfile as any)?.dob || null,
       guardianName: (patientProfile as any)?.GuardianName || latestApt?.guardianName || "",
       guardianRelation: (patientProfile as any)?.GuardianRelation || latestApt?.guardianRelation || "",
+      guardianMobile: (patientProfile as any)?.GuardianMobile || latestApt?.guardianMobile || "",
       doctorReference: resolvedDoctorReference,
       referredBy: resolvedDoctorReference,
     };
