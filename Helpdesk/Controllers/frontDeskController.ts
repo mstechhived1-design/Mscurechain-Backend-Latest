@@ -16,7 +16,9 @@ import MobileAppointment from "../../Appointment/Models/MobileAppointment.js";
 import Hospital from "../../Hospital/Models/Hospital.js";
 import Leave from "../../Leave/Models/Leave.js";
 import MasterDoctorLeave from "../../MasterHelpdesk/Models/MasterDoctorLeave.js";
+import TransactionReport from "../../Report/Models/TransactionReport.js";
 import { HelpdeskRequest } from "../types/index.js";
+
 import {
   generateTransactionId,
   generateReceiptNumber,
@@ -1043,6 +1045,16 @@ export const updatePatient = asyncHandler(
       emergencyContact,
       emergencyContactName,
       emergencyContactEmail,
+      guardianName,
+      GuardianName,
+      fatherName,
+      guardianMobile,
+      GuardianMobile,
+      guardianPhone,
+      guardianRelation,
+      GuardianRelation,
+      doctorReference,
+      referredBy,
     } = req.body;
     const vitalsInput = req.body.vitals || {};
     let user = await (
@@ -1117,6 +1129,19 @@ export const updatePatient = asyncHandler(
       user.dateOfBirth = targetDob;
       if (targetAge !== undefined) user.age = targetAge;
     }
+
+    const finalGuardianName =
+      guardianName !== undefined
+        ? guardianName
+        : GuardianName !== undefined
+          ? GuardianName
+          : fatherName;
+    if (finalGuardianName !== undefined) {
+      const gClean = finalGuardianName ? String(finalGuardianName).trim() : "";
+      user.GuardianName = gClean;
+      user.guardianName = gClean;
+      user.fatherName = gClean;
+    }
     await user.save();
 
     let profile = await (
@@ -1163,7 +1188,106 @@ export const updatePatient = asyncHandler(
     if (allergies !== undefined) profile.allergies = allergies;
     if (conditions !== undefined) profile.conditions = conditions;
     if (medications !== undefined) profile.medications = medications;
+
+    if (finalGuardianName !== undefined) {
+      profile.GuardianName = finalGuardianName ? String(finalGuardianName).trim() : "";
+    }
+    const finalGuardianMobile =
+      guardianMobile !== undefined
+        ? guardianMobile
+        : GuardianMobile !== undefined
+          ? GuardianMobile
+          : guardianPhone;
+    if (finalGuardianMobile !== undefined) {
+      profile.GuardianMobile = finalGuardianMobile ? String(finalGuardianMobile).trim() : "";
+    }
+    const finalGuardianRelation =
+      guardianRelation !== undefined ? guardianRelation : GuardianRelation;
+    if (finalGuardianRelation !== undefined) {
+      profile.GuardianRelation = finalGuardianRelation ? String(finalGuardianRelation).trim() : "";
+    }
+    const finalDoctorReference =
+      doctorReference !== undefined ? doctorReference : referredBy;
+    if (finalDoctorReference !== undefined) {
+      profile.doctorReference = finalDoctorReference ? String(finalDoctorReference).trim() : "";
+      (profile as any).referredBy = finalDoctorReference ? String(finalDoctorReference).trim() : "";
+    }
     await profile.save();
+
+    // Cascade update to active and past admissions, appointments, and transaction reports
+    const resolvedGName =
+      finalGuardianName !== undefined
+        ? (finalGuardianName ? String(finalGuardianName).trim() : "")
+        : undefined;
+    const resolvedGMobile =
+      finalGuardianMobile !== undefined
+        ? (finalGuardianMobile ? String(finalGuardianMobile).trim() : "")
+        : undefined;
+    const resolvedDocRef =
+      finalDoctorReference !== undefined
+        ? (finalDoctorReference ? String(finalDoctorReference).trim() : "")
+        : undefined;
+
+    if (resolvedGName !== undefined || resolvedGMobile !== undefined || resolvedDocRef !== undefined) {
+      try {
+        const admUpdates: any = {};
+        if (resolvedDocRef !== undefined) {
+          admUpdates.doctorReference = resolvedDocRef;
+          admUpdates.referredBy = resolvedDocRef;
+        }
+        if (resolvedGName !== undefined) admUpdates.guardianName = resolvedGName;
+        if (resolvedGMobile !== undefined) admUpdates.guardianMobile = resolvedGMobile;
+
+        await (IPDAdmission.updateMany(
+          { $or: [{ patient: actualPatientUserId }, { patient: profile._id }] },
+          { $set: admUpdates }
+        ) as any).unscoped();
+
+        const apptUpdates: any = {};
+        if (resolvedDocRef !== undefined) {
+          apptUpdates.doctorReference = resolvedDocRef;
+          apptUpdates["patientDetails.doctorReference"] = resolvedDocRef;
+        }
+        if (resolvedGName !== undefined) {
+          apptUpdates.guardianName = resolvedGName;
+          apptUpdates.fatherName = resolvedGName;
+          apptUpdates["patientDetails.guardianName"] = resolvedGName;
+          apptUpdates["patientDetails.fatherName"] = resolvedGName;
+        }
+        if (resolvedGMobile !== undefined) {
+          apptUpdates.guardianMobile = resolvedGMobile;
+          apptUpdates["patientDetails.guardianMobile"] = resolvedGMobile;
+        }
+        await (Appointment.updateMany(
+          { patient: actualPatientUserId },
+          { $set: apptUpdates }
+        ) as any).unscoped();
+
+        const reports = await (TransactionReport.find({
+          $or: [{ patient: actualPatientUserId }, { patient: profile._id }],
+        }) as any).unscoped();
+        for (const rep of reports) {
+          if (!rep.reportData) rep.reportData = {};
+          if (resolvedDocRef !== undefined) {
+            rep.reportData.doctorReference = resolvedDocRef;
+            rep.reportData.referredBy = resolvedDocRef;
+          }
+          if (resolvedGName !== undefined) {
+            rep.reportData.guardianName = resolvedGName;
+            rep.reportData.GuardianName = resolvedGName;
+          }
+          if (resolvedGMobile !== undefined) {
+            rep.reportData.guardianMobile = resolvedGMobile;
+            rep.reportData.GuardianMobile = resolvedGMobile;
+          }
+          rep.markModified("reportData");
+          await rep.save();
+        }
+      } catch (cascadeErr) {
+        console.error("Error cascading patient field updates:", cascadeErr);
+      }
+    }
+
     try {
       const activeAdmission = await (
         IPDAdmission.findOne({
@@ -1186,7 +1310,20 @@ export const updatePatient = asyncHandler(
     } catch (err) {
       console.error("Cache invalidation failed in updatePatient:", err);
     }
-    res.json({ message: "Patient updated successfully", profile });
+    res.json({
+      message: "Patient updated successfully",
+      profile,
+      user: {
+        ...user.toObject(),
+        name: sanitizePatientName(user.name),
+        guardianName: profile.GuardianName || user.GuardianName || "",
+        GuardianName: profile.GuardianName || user.GuardianName || "",
+        guardianMobile: profile.GuardianMobile || "",
+        GuardianMobile: profile.GuardianMobile || "",
+        doctorReference: profile.doctorReference || "",
+        referredBy: profile.doctorReference || "",
+      },
+    });
   },
 );
 

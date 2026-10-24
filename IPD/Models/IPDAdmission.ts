@@ -29,6 +29,10 @@ const ipdAdmissionSchema = new Schema<IIPDAdmission>(
     diet: { type: String },
     clinicalNotes: { type: String },
     reason: { type: String }, // Primary symptoms/reason for admission
+    doctorReference: { type: String },
+    referredBy: { type: String },
+    guardianName: { type: String },
+    guardianMobile: { type: String },
     vitals: {
       height: { type: String },
       weight: { type: String },

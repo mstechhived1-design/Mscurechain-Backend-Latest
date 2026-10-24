@@ -89,6 +89,7 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
       dob: (patientProfile as any)?.dob || null,
       guardianName: (patientProfile as any)?.GuardianName || "",
       guardianRelation: (patientProfile as any)?.GuardianRelation || "",
+      guardianMobile: (patientProfile as any)?.GuardianMobile || "",
       doctorReference: resolvedDoctorReference,
       referredBy: resolvedDoctorReference,
     };

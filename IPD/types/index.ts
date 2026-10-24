@@ -26,6 +26,10 @@ export interface IIPDAdmission extends Document {
   diet?: string;
   clinicalNotes?: string;
   reason?: string; // Primary symptoms/reason for admission
+  doctorReference?: string;
+  referredBy?: string;
+  guardianName?: string;
+  guardianMobile?: string;
   vitals?: {
     height?: string;
     weight?: string;

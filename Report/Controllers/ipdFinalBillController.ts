@@ -132,6 +132,7 @@ export const getIPDFinalBill = async (req: Request, res: Response) => {
       dob: (patientProfile as any)?.dob || null,
       guardianName: (patientProfile as any)?.GuardianName || "",
       guardianRelation: (patientProfile as any)?.GuardianRelation || "",
+      guardianMobile: (patientProfile as any)?.GuardianMobile || "",
       doctorReference: resolvedDoctorReference,
       referredBy: resolvedDoctorReference,
     };

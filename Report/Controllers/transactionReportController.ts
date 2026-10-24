@@ -90,14 +90,22 @@ export const saveTransactionReport = async (req: Request, res: Response) => {
     
     const sanitizedReportData = sanitizeReportData(reportData);
 
-    if (!sanitizedReportData.doctorReference) {
+    if (!sanitizedReportData.doctorReference || !sanitizedReportData.guardianName || !sanitizedReportData.guardianMobile) {
       const pProfile = await (PatientProfile.findOne({
         user: patientId,
         hospital: hospitalId,
-      }) as any)?.unscoped().select("doctorReference referredBy GuardianName GuardianRelation").lean();
-      if (pProfile?.doctorReference || pProfile?.referredBy) {
+      }) as any)?.unscoped().select("doctorReference referredBy GuardianName GuardianMobile GuardianRelation").lean();
+      if (!sanitizedReportData.doctorReference && (pProfile?.doctorReference || pProfile?.referredBy)) {
         sanitizedReportData.doctorReference = pProfile.doctorReference || pProfile.referredBy;
         sanitizedReportData.referredBy = pProfile.doctorReference || pProfile.referredBy;
+      }
+      if (!sanitizedReportData.guardianName && pProfile?.GuardianName) {
+        sanitizedReportData.guardianName = pProfile.GuardianName;
+        sanitizedReportData.GuardianName = pProfile.GuardianName;
+      }
+      if (!sanitizedReportData.guardianMobile && pProfile?.GuardianMobile) {
+        sanitizedReportData.guardianMobile = pProfile.GuardianMobile;
+        sanitizedReportData.GuardianMobile = pProfile.GuardianMobile;
       }
     }
 
@@ -134,15 +142,28 @@ export const getPatientTransactionReports = async (req: Request, res: Response) 
     const profile = await (PatientProfile.findOne({
       user: patientId,
       ...(hospitalId ? { hospital: hospitalId } : {})
-    }) as any)?.unscoped().select("doctorReference referredBy GuardianName GuardianRelation").lean();
+    }) as any)?.unscoped().select("doctorReference referredBy GuardianName GuardianMobile GuardianRelation").lean();
 
     const sanitizedReports = reports.map((r: any) => {
       const docRef = r.reportData?.doctorReference || r.reportData?.referredBy || profile?.doctorReference || profile?.referredBy || "";
+      const gName = r.reportData?.guardianName || r.reportData?.GuardianName || profile?.GuardianName || "";
+      const gMob = r.reportData?.guardianMobile || r.reportData?.GuardianMobile || profile?.GuardianMobile || "";
+      const cleanData = sanitizeReportData(r.reportData);
+      if (cleanData) {
+        cleanData.doctorReference = docRef;
+        cleanData.referredBy = docRef;
+        cleanData.guardianName = gName;
+        cleanData.GuardianName = gName;
+        cleanData.guardianMobile = gMob;
+        cleanData.GuardianMobile = gMob;
+      }
       return {
         ...r,
         doctorReference: docRef,
         referredBy: docRef,
-        reportData: sanitizeReportData(r.reportData),
+        guardianName: gName,
+        guardianMobile: gMob,
+        reportData: cleanData,
       };
     });
     res.json(sanitizedReports);
@@ -172,7 +193,7 @@ export const getAllTransactionReports = async (req: Request, res: Response) => {
       
     // Fetch MRNs and doctorReference from PatientProfile
     const patientIds = reports.map((r: any) => r.patient?._id).filter(Boolean);
-    const profiles = await (PatientProfile.find({ user: { $in: patientIds } }) as any).unscoped().select("user mrn doctorReference referredBy GuardianName GuardianRelation").lean();
+    const profiles = await (PatientProfile.find({ user: { $in: patientIds } }) as any).unscoped().select("user mrn doctorReference referredBy GuardianName GuardianMobile GuardianRelation").lean();
     
     const profileMap = new Map();
     profiles.forEach((p: any) => {
@@ -187,6 +208,7 @@ export const getAllTransactionReports = async (req: Request, res: Response) => {
             r.patient.doctorReference = docRef;
             r.patient.referredBy = docRef;
             r.patient.guardianName = prof?.GuardianName || "";
+            r.patient.guardianMobile = prof?.GuardianMobile || "";
             r.patient.guardianRelation = prof?.GuardianRelation || "";
         }
         r.reportData = sanitizeReportData(r.reportData);
