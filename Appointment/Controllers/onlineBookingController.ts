@@ -612,6 +612,7 @@ export const bookOnlineAppointment = async (req: Request, res: Response) => {
     const {
       doctorId, hospitalId, date, startTime, endTime, hourlyBlock,
       appointmentType, mode, symptoms, notes, vitals,
+      paymentMethod,
       razorpayOrderId, razorpayPaymentId, razorpaySignature
     } = req.body;
 
@@ -782,7 +783,7 @@ export const bookOnlineAppointment = async (req: Request, res: Response) => {
       vitals,
       consultationFee: feePaid,
       paymentStatus: "Paid",
-      paymentMethod: "razorpay",
+      paymentMethod: paymentMethod || "upi",
       razorpayOrderId,
       razorpayPaymentId,
       status: "Booked",
@@ -812,6 +813,7 @@ export const bookOnlineAppointment = async (req: Request, res: Response) => {
 
       const transId = transactionId;
       const rcptNo = transId;
+      const resolvedMode = (paymentMethod || "upi").toLowerCase();
 
       await Transaction.create({
         user: (req as any).user._id,
@@ -824,9 +826,9 @@ export const bookOnlineAppointment = async (req: Request, res: Response) => {
         transactionId: transId,
         receiptNumber: rcptNo,
         date: new Date(),
-        paymentMode: "upi", // Razorpay usually UPI/Online
+        paymentMode: resolvedMode,
         paymentDetails: {
-          upi: feePaid
+          [resolvedMode]: feePaid
         }
       });
       console.log(`[Mobile Book] Transaction created for ${newAppointment.appointmentId}`);

@@ -23,14 +23,75 @@ import { tenantLocalStorage } from "../../middleware/tenantPlugin.js";
 import { buildIPDFinalBillPayload } from "../../Report/Utils/buildIPDFinalBill.js";
 
 const getFrontendBaseUrl = () => {
-  const envUrl =
-    process.env.INTERNAL_FRONTEND_URL ||
-    process.env.FRONTEND_INTERNAL_URL ||
-    process.env.FRONTEND_URL ||
-    "http://127.0.0.1:3000";
-  const first = envUrl.split(",")[0].trim().replace(/\/+$/, "");
-  return first || "http://127.0.0.1:3000";
+  if (process.env.INTERNAL_FRONTEND_URL) {
+    return process.env.INTERNAL_FRONTEND_URL.trim().replace(/\/+$/, "");
+  }
+  if (process.env.FRONTEND_INTERNAL_URL) {
+    return process.env.FRONTEND_INTERNAL_URL.trim().replace(/\/+$/, "");
+  }
+
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.RAILWAY_ENVIRONMENT) ||
+    Boolean(process.env.VERCEL);
+
+  const rawUrls = (process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((u) => u.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+
+  if (isProduction) {
+    const remoteUrl = rawUrls.find(
+      (u) => !u.includes("localhost") && !u.includes("127.0.0.1") && !u.includes("0.0.0.0")
+    );
+    return remoteUrl || "https://www.mscurechain.com";
+  }
+
+  const localUrl = rawUrls.find((u) => u.includes("localhost") || u.includes("127.0.0.1"));
+  return localUrl || rawUrls[0] || "http://127.0.0.1:3000";
 };
+
+async function executeReceiptFetch(baseUrl: string, type: string, id?: string, dataPayload?: any) {
+  try {
+    if (dataPayload) {
+      const renderRes = await fetch(`${baseUrl}/api/receipts/render`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, data: dataPayload }),
+      });
+      const text = await renderRes.text();
+      let renderJson: any = null;
+      try {
+        renderJson = JSON.parse(text);
+      } catch {
+        renderJson = null;
+      }
+      if (renderRes.ok && renderJson?.success) {
+        return renderJson;
+      }
+    }
+
+    if (id) {
+      const targetUrl = `${baseUrl}/api/receipts/${encodeURIComponent(type)}/${encodeURIComponent(id)}`;
+      const response = await fetch(targetUrl, {
+        headers: { "Content-Type": "application/json" },
+      });
+      const text = await response.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+      if (response.ok && data?.success) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn(`[executeReceiptFetch] Warning fetching from ${baseUrl}:`, err);
+  }
+  return null;
+}
 
 function safeUnscoped(query: any) {
   if (query && typeof query.unscoped === "function") {
@@ -848,31 +909,14 @@ export const getReceiptHtml = async (req: Request, res: Response) => {
       }
     }
 
-    // 2. Call canonical POST /api/receipts/render
-    if (dataPayload) {
-      const renderRes = await fetch(`${baseUrl}/api/receipts/render`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, data: dataPayload }),
-      });
-
-      const renderJson = await renderRes.json();
-      if (renderRes.ok && renderJson.success) {
-        return res.json(renderJson);
-      }
+    // 2. Fetch rendered document with automatic fallback
+    let result = await executeReceiptFetch(baseUrl, type, id, dataPayload);
+    if (!result && baseUrl !== "https://www.mscurechain.com") {
+      result = await executeReceiptFetch("https://www.mscurechain.com", type, id, dataPayload);
     }
 
-    // 3. Fallback to GET /api/receipts/:type/:id if ID was directly queried
-    if (id) {
-      const targetUrl = `${baseUrl}/api/receipts/${encodeURIComponent(type)}/${encodeURIComponent(id)}`;
-      const response = await fetch(targetUrl, {
-        headers: { "Content-Type": "application/json" },
-      });
-
-      const data = await response.json();
-      if (response.ok && data.success) {
-        return res.json(data);
-      }
+    if (result && result.success) {
+      return res.json(result);
     }
 
     return res.status(404).json({
@@ -903,22 +947,10 @@ export const sendReceiptWhatsApp = async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: "Recipient phone number is required" });
     }
 
-    let docData: any = null;
     const baseUrl = getFrontendBaseUrl();
-
-    if (inputData) {
-      const renderRes = await fetch(`${baseUrl}/api/receipts/render`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, data: inputData }),
-      });
-      docData = await renderRes.json();
-    } else {
-      const targetUrl = `${baseUrl}/api/receipts/${encodeURIComponent(type)}/${encodeURIComponent(id)}`;
-      const response = await fetch(targetUrl, {
-        headers: { "Content-Type": "application/json" },
-      });
-      docData = await response.json();
+    let docData = await executeReceiptFetch(baseUrl, type, id, inputData);
+    if (!docData && baseUrl !== "https://www.mscurechain.com") {
+      docData = await executeReceiptFetch("https://www.mscurechain.com", type, id, inputData);
     }
 
     const hospitalId = inputHospitalId || user?.hospitalId || "horizin-hospital";
