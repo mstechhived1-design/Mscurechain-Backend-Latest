@@ -73,7 +73,7 @@ const MobileAppointmentSchema: Schema = new Schema(
     
     symptoms: [{ type: String }],
     notes: { type: String },
-    
+  
     vitals: {
       weight: { type: String },
       bp: { type: String },

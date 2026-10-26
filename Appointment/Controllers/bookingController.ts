@@ -2075,7 +2075,7 @@ export const getAppointments = asyncHandler(
       const fetchAppointments = async () => {
         return Appointment.find(query)
           .sort({ date: sortOrder, createdAt: sortOrder })
-          .populate({ path: "patient", select: "name mobile email" })
+          .populate({ path: "patient", select: "name mobile email dob age ageUnit gender honorific mrn" })
           .populate("hospital", "name")
           .populate({
             path: "doctor",
@@ -2125,39 +2125,69 @@ export const getAppointments = asyncHandler(
       const globalPatients = await (
         (patientQuery as any).unscoped ? (patientQuery as any).unscoped() : patientQuery
       );
+      const patientMap = new Map(
+        globalPatients.map((p: any) => [p._id.toString(), p]),
+      );
       const userNameMap = new Map(
         globalPatients.map((p: any) => [p._id.toString(), p.name]),
       );
 
+      const profiles = await (
+        PatientProfile.find({ user: { $in: allUserIds } }) as any
+      ).unscoped().lean();
+      const profileMap = new Map(profiles.map((p: any) => [p.user?.toString(), p]));
+
       // Normalize MobileAppointments to match Appointment structure
       const normalizedMobile = mobileApps.map((m: any) => {
-        let userId = m.patient?.user?._id || m.patient?.user;
+        let profile = m.patient; // PatientProfile
+        let user = profile?.user;
+        let userId = user?._id || user || profile?.user;
         let pName =
           userNameMap.get(userId?.toString()) ||
-          (m.patient as any)?.user?.name ||
+          user?.name ||
+          profile?.name ||
           m.patientDetails?.name ||
           "Unknown";
+
+        const pDob = profile?.dob || user?.dob || m.patientDetails?.dob;
+        const pAge = profile?.age ?? user?.age ?? m.patientDetails?.age;
+        const pAgeUnit = profile?.ageUnit || user?.ageUnit || m.patientDetails?.ageUnit || "Years";
+        const pGender = profile?.gender || user?.gender || m.patientDetails?.gender || "Unknown";
+        const pHonorific = profile?.honorific || user?.honorific || m.honorific || m.patientDetails?.honorific || "";
+        const pMrn = profile?.mrn || user?.mrn || m.mrn || "N/A";
 
         return {
           ...m,
           id: m._id,
           isOnline: true,
+          patientName: pName,
+          honorific: pHonorific,
+          dob: pDob,
+          age: pAge,
+          ageUnit: pAgeUnit,
+          gender: pGender,
+          mrn: pMrn,
           patient: {
             _id: userId,
             name: pName,
+            honorific: pHonorific,
+            dob: pDob,
+            age: pAge,
+            ageUnit: pAgeUnit,
+            gender: pGender,
+            mrn: pMrn,
             mobile:
-              (m.patient as any)?.user?.mobile ||
+              user?.mobile ||
+              profile?.contactNumber ||
               m.patientDetails?.mobile ||
               "N/A",
           },
-          patientName: pName,
           doctor: m.doctor
             ? {
                 _id: m.doctor._id,
                 name: (m.doctor as any).user?.name || "Pending",
               }
             : null,
-          mrn: m.mrn || m.patient?.mrn || "N/A",
           timeSlot:
             m.startTime && m.endTime
               ? `${m.startTime} - ${m.endTime}`
@@ -2198,12 +2228,27 @@ export const getAppointments = asyncHandler(
             ? `${app.startTime} - ${app.endTime}`
             : app.appointmentTime || app.startTime || "N/A");
 
+        const pUser: any = patientMap.get(patientUserId?.toString());
+        const prof: any = profileMap.get(patientUserId?.toString());
+        const patientDob = prof?.dob || pUser?.dob || app.patient?.dob || app.dob || app.patientDetails?.dob;
+        const patientAge = prof?.age ?? pUser?.age ?? app.patient?.age ?? app.age ?? app.patientDetails?.age;
+        const patientAgeUnit = prof?.ageUnit || pUser?.ageUnit || app.patient?.ageUnit || app.ageUnit || app.patientDetails?.ageUnit || "Years";
+        const patientGender = prof?.gender || pUser?.gender || app.patient?.gender || app.gender || app.patientDetails?.gender || "Unknown";
+        const patientHonorific = prof?.honorific || pUser?.honorific || app.honorific || app.appointmentHonorific || app.patientDetails?.honorific || app.patient?.honorific || "";
+        const patientMrn = prof?.mrn || app.mrn || pUser?.mrn || app.patient?.mrn || "N/A";
+
         return {
           ...app,
           id: app._id,
           timeSlot: timeVal,
           time: timeVal,
           patientName: pName,
+          honorific: patientHonorific,
+          dob: patientDob,
+          age: patientAge,
+          ageUnit: patientAgeUnit,
+          gender: patientGender,
+          mrn: patientMrn,
           doctorName:
             app.doctorName ||
             app.doctor?.user?.name ||
@@ -2213,7 +2258,12 @@ export const getAppointments = asyncHandler(
             ...app.patient,
             _id: patientUserId,
             name: pName,
-            mrn: app.mrn || "N/A",
+            honorific: patientHonorific,
+            dob: patientDob,
+            age: patientAge,
+            ageUnit: patientAgeUnit,
+            gender: patientGender,
+            mrn: patientMrn,
           },
           doctor: {
             ...app.doctor,
