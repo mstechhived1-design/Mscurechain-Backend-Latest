@@ -2013,12 +2013,19 @@ export const mapOrderToSample = (o: any) => {
     if (!dob) return 0;
     const birthDate = new Date(dob);
     const today = new Date();
-    let age = today.getFullYear() - birthDate.getFullYear();
-    const month = today.getMonth() - birthDate.getMonth();
-    if (month < 0 || (month === 0 && today.getDate() < birthDate.getDate())) {
-      age--;
+    const diffMs = today.getTime() - birthDate.getTime();
+    if (isNaN(diffMs) || diffMs < 0) return 0;
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const months = (today.getFullYear() - birthDate.getFullYear()) * 12 + (today.getMonth() - birthDate.getMonth());
+    const years = Math.floor(days / 365.25);
+
+    if (years >= 1) {
+      return `${years} ${years === 1 ? "Year" : "Years"}`;
+    } else if (months >= 1) {
+      return `${months} ${months === 1 ? "Month" : "Months"}`;
+    } else {
+      return `${Math.max(1, days)} ${days === 1 ? "Day" : "Days"}`;
     }
-    return age;
   };
 
   // Resolve Bed Info from Admission
@@ -2109,6 +2116,7 @@ export const mapOrderToSample = (o: any) => {
         bedInfo: bedInfo, // Injected bed info
         honorific: resolvedHonorific,
         ageUnit: resolvedAgeUnit,
+        dob: o.patientProfile?.dob || o.patient?.dob || (o.patientDetails as any)?.dob || (o.patientDetails as any)?.dateOfBirth,
       };
 
   // Determine status mapping
@@ -2515,12 +2523,19 @@ export const getLabOrder = async (req: Request, res: Response) => {
       if (!dob) return 0;
       const birthDate = new Date(dob);
       const today = new Date();
-      let age = today.getFullYear() - birthDate.getFullYear();
-      const m = today.getMonth() - birthDate.getMonth();
-      if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
-        age--;
+      const diffMs = today.getTime() - birthDate.getTime();
+      if (isNaN(diffMs) || diffMs < 0) return 0;
+      const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const months = (today.getFullYear() - birthDate.getFullYear()) * 12 + (today.getMonth() - birthDate.getMonth());
+      const years = Math.floor(days / 365.25);
+
+      if (years >= 1) {
+        return `${years} ${years === 1 ? "Year" : "Years"}`;
+      } else if (months >= 1) {
+        return `${months} ${months === 1 ? "Month" : "Months"}`;
+      } else {
+        return `${Math.max(1, days)} ${days === 1 ? "Day" : "Days"}`;
       }
-      return age;
     };
 
     const result = {
@@ -2565,6 +2580,7 @@ export const getLabOrder = async (req: Request, res: Response) => {
           profile?.ageUnit ||
           (order.patientDetails as any)?.ageUnit ||
           "Years",
+        dob: profile?.dob || order.patient?.dob || (order.patientDetails as any)?.dob || (order.patientDetails as any)?.dateOfBirth,
       },
       doctor: {
         _id: order.doctor?._id || order.doctor,

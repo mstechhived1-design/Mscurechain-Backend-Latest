@@ -766,7 +766,7 @@ export const getPatientDetails = async (req: Request, res: Response) => {
       .unscoped()
       .populate({
         path: "user",
-        select: "name email mobile",
+        select: "name email mobile honorific dob age ageUnit gender",
         options: { unscoped: true } as any,
       });
 
@@ -1000,18 +1000,24 @@ export const getPatientDetails = async (req: Request, res: Response) => {
       ...profileObj,
       ...latestVitals,
       name: patientProfile.user?.name || patientProfile.name || "Unknown",
+      honorific: patientProfile.honorific || patientProfile.user?.honorific || "",
+      dob: patientProfile.dob || patientProfile.user?.dob,
+      age: patientProfile.age ?? patientProfile.user?.age,
+      ageUnit: patientProfile.ageUnit || patientProfile.user?.ageUnit || "Years",
       email: patientProfile.user?.email || patientProfile.email || "N/A",
       mobile: patientProfile.user?.mobile || patientProfile.mobile || "N/A",
       bloodGroup: patientProfile.bloodGroup || "Unknown",
       personal: {
         _id: patientProfile.user?._id || patientId,
         name: patientProfile.user?.name || patientProfile.name || "Unknown",
+        honorific: patientProfile.honorific || patientProfile.user?.honorific || "",
         email: patientProfile.user?.email || patientProfile.email || "N/A",
         emergencyContactEmail: patientProfile.emergencyContactEmail || "N/A",
         mobile: patientProfile.user?.mobile || patientProfile.mobile || "N/A",
-        dob: patientProfile.dob,
-        age: patientProfile.age,
-        gender: patientProfile.gender,
+        dob: patientProfile.dob || patientProfile.user?.dob,
+        age: patientProfile.age ?? patientProfile.user?.age,
+        ageUnit: patientProfile.ageUnit || patientProfile.user?.ageUnit || "Years",
+        gender: patientProfile.gender || patientProfile.user?.gender,
         address: patientProfile.address,
         bloodGroup: patientProfile.bloodGroup || "Unknown",
       },
@@ -2160,20 +2166,43 @@ export const getDoctorPatients = async (req: Request, res: Response) => {
     const results = await Appointment.aggregate(pipeline);
 
     const patients = results.map((r) => {
-      let age = r.profileInfo?.age;
-      if (!age && r.profileInfo?.dob) {
-        const diff = Date.now() - new Date(r.profileInfo.dob).getTime();
-        age = Math.floor(diff / (365.25 * 24 * 60 * 60 * 1000));
+      let age = r.profileInfo?.age ?? r.userInfo?.age;
+      const dob = r.profileInfo?.dob || r.userInfo?.dob;
+      const ageUnit = r.profileInfo?.ageUnit || r.userInfo?.ageUnit || "Years";
+      const honorific = r.profileInfo?.honorific || r.userInfo?.honorific || "";
+
+      if ((age === undefined || age === null || age === 0 || age === "0") && dob) {
+        const birthDate = new Date(dob);
+        const today = new Date();
+        const diffMs = today.getTime() - birthDate.getTime();
+        if (!isNaN(diffMs) && diffMs >= 0) {
+          const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          const months = (today.getFullYear() - birthDate.getFullYear()) * 12 + (today.getMonth() - birthDate.getMonth());
+          const years = Math.floor(days / 365.25);
+
+          if (years >= 1) {
+            age = `${years} ${years === 1 ? "Year" : "Years"}`;
+          } else if (months >= 1) {
+            age = `${months} ${months === 1 ? "Month" : "Months"}`;
+          } else {
+            age = `${Math.max(1, days)} ${days === 1 ? "Day" : "Days"}`;
+          }
+        }
+      } else if (age !== undefined && age !== null && age !== "") {
+        age = /[a-zA-Z]/.test(String(age)) ? String(age) : `${age} ${ageUnit}`;
       }
 
       return {
         id: r._id,
         name: r.userInfo?.name || "Unknown",
+        honorific: honorific,
+        dob: dob,
+        age: age || "---",
+        ageUnit: ageUnit,
         mobile: r.userInfo?.mobile || "N/A",
         email: r.userInfo?.email || "N/A",
         mrn: r.profileInfo?.mrn || "N/A",
-        age: age,
-        gender: r.profileInfo?.gender,
+        gender: r.profileInfo?.gender || r.userInfo?.gender || "---",
         lastVisit: r.lastVisit,
         condition:
           r.lastReason ||
