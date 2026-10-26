@@ -506,11 +506,62 @@ export const calculateBillBreakdown = async (admissionId: string) => {
   // Balance is total clinical charges minus all payments (advances + settlements) and discounts
   const balance = totalBill - totalAdvance - totalSettlement - discount;
 
-  const calcAge = (dob: any) => {
-    if (!dob) return null;
-    const diff = Date.now() - new Date(dob).getTime();
-    return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
+  const calculateDetailedAge = (dobInput: any, fallbackAge: any, fallbackUnit: any) => {
+    if (dobInput) {
+      const birthDate = new Date(dobInput);
+      if (!isNaN(birthDate.getTime())) {
+        const today = new Date();
+        let ageYears = today.getFullYear() - birthDate.getFullYear();
+        let ageMonths = today.getMonth() - birthDate.getMonth();
+        let ageDays = today.getDate() - birthDate.getDate();
+
+        if (ageDays < 0) {
+          ageMonths--;
+          ageDays += new Date(today.getFullYear(), today.getMonth(), 0).getDate();
+        }
+        if (ageMonths < 0) {
+          ageYears--;
+          ageMonths += 12;
+        }
+
+        if (ageYears > 0) {
+          if (ageMonths > 0 && ageYears < 5) {
+            return `${ageYears} ${ageYears === 1 ? 'Year' : 'Years'} ${ageMonths} ${ageMonths === 1 ? 'Month' : 'Months'}`;
+          }
+          return `${ageYears} ${ageYears === 1 ? 'Year' : 'Years'}`;
+        }
+        if (ageMonths > 0) {
+          return `${ageMonths} ${ageMonths === 1 ? 'Month' : 'Months'}`;
+        }
+        if (ageDays > 0) {
+          return `${ageDays} ${ageDays === 1 ? 'Day' : 'Days'}`;
+        }
+        return "0 Days";
+      }
+    }
+    if (fallbackAge !== undefined && fallbackAge !== null && fallbackAge !== "" && fallbackAge !== "-") {
+      const fallbackStr = String(fallbackAge).trim();
+      const dMatch = fallbackStr.match(/^(\d+)\s*d(ays?)?$/i);
+      if (dMatch) return `${dMatch[1]} ${dMatch[1] === '1' ? 'Day' : 'Days'}`;
+      const mMatch = fallbackStr.match(/^(\d+)\s*m(os?|onths?)?$/i);
+      if (mMatch) return `${mMatch[1]} ${mMatch[1] === '1' ? 'Month' : 'Months'}`;
+      const yMatch = fallbackStr.match(/^(\d+)\s*y(rs?|ears?)?$/i);
+      if (yMatch) return `${yMatch[1]} ${yMatch[1] === '1' ? 'Year' : 'Years'}`;
+
+      const rawUnit = String(fallbackUnit || "").trim().toLowerCase();
+      const unit = rawUnit.startsWith("d") ? (fallbackStr === "1" ? "Day" : "Days") :
+                   rawUnit.startsWith("m") ? (fallbackStr === "1" ? "Month" : "Months") :
+                   (fallbackStr === "1" ? "Year" : "Years");
+      if (fallbackStr.match(/(Y|Mos|Days|Month|Day|Yr|Yrs|Years|Months)$/i)) return fallbackStr;
+      return `${fallbackAge} ${unit}`;
+    }
+    return "";
   };
+
+  const patientDob = patientObj?.dob || patientObj?.dateOfBirth || profile?.dob || profile?.dateOfBirth || (admission.patient as any)?.dob || (admission.patient as any)?.dateOfBirth;
+  const rawFallbackAge = patientObj?.age ?? profile?.age ?? "";
+  const rawFallbackUnit = patientObj?.ageUnit || profile?.ageUnit || "Years";
+  const patientAgeString = calculateDetailedAge(patientDob, rawFallbackAge, rawFallbackUnit);
 
   return {
     admissionId: admission.admissionId,
@@ -518,7 +569,10 @@ export const calculateBillBreakdown = async (admissionId: string) => {
     rawPatientName: rawPatientName,
     patientHonorific: rawHonorific,
     honorific: rawHonorific,
-    patientAge: patientObj?.age || profile?.age || calcAge(patientObj?.dateOfBirth || profile?.dateOfBirth) || "",
+    dob: patientDob || "",
+    patientDob: patientDob || "",
+    patientAge: patientAgeString,
+    patientAgeUnit: rawFallbackUnit,
     patientGender: patientObj?.gender || profile?.gender || "",
     bedCharges: {
       items: bedDetails,
