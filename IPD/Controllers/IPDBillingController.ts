@@ -15,6 +15,9 @@ import PharmacyOrder from "../../Pharmacy/Models/PharmacyOrder.js";
 import LabOrder from "../../Lab/Models/LabOrder.js";
 import IPDMedicineIssuance from "../../Pharmacy/Models/IPDMedicineIssuance.js";
 import { generateTransactionId, generateReceiptNumber } from "../../utils/idGenerator.js";
+import { formatPatientDisplayName } from "../../utils/identityResolver.js";
+import PatientProfile from "../../Patient/Models/PatientProfile.js";
+import User from "../../Auth/Models/User.js";
 
 // Helper to calculate total bill breakdown
 export const calculateBillBreakdown = async (admissionId: string) => {
@@ -28,7 +31,33 @@ export const calculateBillBreakdown = async (admissionId: string) => {
   }
 
   if (!admission) return null;
-  const patientObj: any = admission.patient;
+  let patientObj: any = admission.patient ? (admission.patient.toObject ? admission.patient.toObject() : { ...admission.patient }) : null;
+  const patientId = admission.patient?._id || admission.patient;
+
+  const profile: any = patientId
+    ? await PatientProfile.findOne({
+        $or: [{ user: patientId }, { _id: patientId }],
+      }).lean()
+    : null;
+
+  if (profile && (!patientObj || !patientObj.name)) {
+    const user = await User.findById(profile.user).select("name mobile honorific gender dateOfBirth age").lean();
+    if (user) {
+      patientObj = {
+        _id: user._id,
+        name: user.name,
+        mobile: user.mobile,
+        honorific: (user as any)?.honorific || (profile as any)?.honorific,
+        gender: (user as any)?.gender || (profile as any)?.gender,
+        dateOfBirth: (user as any)?.dateOfBirth || (profile as any)?.dateOfBirth,
+        age: (user as any)?.age || (profile as any)?.age,
+      };
+    }
+  }
+
+  const rawHonorific = patientObj?.honorific || profile?.honorific || (admission as any)?.honorific || (admission as any)?.patientHonorific || "";
+  const rawPatientName = patientObj?.name || profile?.name || "Unknown Patient";
+  const formattedPatientName = formatPatientDisplayName(rawPatientName, rawHonorific);
 
   // 1. Calculate Bed Charges
   const occupancies = await BedOccupancy.find({
@@ -485,9 +514,12 @@ export const calculateBillBreakdown = async (admissionId: string) => {
 
   return {
     admissionId: admission.admissionId,
-    patientName: patientObj?.name || "Unknown Patient",
-    patientAge: patientObj?.age || calcAge(patientObj?.dateOfBirth) || "",
-    patientGender: patientObj?.gender || "",
+    patientName: formattedPatientName,
+    rawPatientName: rawPatientName,
+    patientHonorific: rawHonorific,
+    honorific: rawHonorific,
+    patientAge: patientObj?.age || profile?.age || calcAge(patientObj?.dateOfBirth || profile?.dateOfBirth) || "",
+    patientGender: patientObj?.gender || profile?.gender || "",
     bedCharges: {
       items: bedDetails,
       total: totalBedCharge,
@@ -791,6 +823,7 @@ export const applyDiscount = asyncHandler(async (req: any, res: Response) => {
 
 export const lockBill = asyncHandler(async (req: any, res: Response) => {
   const { admissionId } = req.params;
+  const { preserveOriginalCutoff } = req.body || {};
 
   let admission: any = null;
   if (mongoose.Types.ObjectId.isValid(admissionId)) {
@@ -804,7 +837,12 @@ export const lockBill = asyncHandler(async (req: any, res: Response) => {
   if (!admission) throw new ApiError(404, "Admission not found");
 
   admission.isBillLocked = true;
-  admission.billLockedAt = new Date();
+  // If preserveOriginalCutoff is requested and a previous billLockedAt exists, keep it
+  if (preserveOriginalCutoff && admission.billLockedAt) {
+    // Keep existing billLockedAt timestamp
+  } else {
+    admission.billLockedAt = new Date();
+  }
   if (req.user?._id) {
     admission.billLockedBy = req.user._id;
   }

@@ -350,7 +350,7 @@ export const getBedDetails = asyncHandler(
           // Billing Calculation (Pro-rated for short occupancies)
           const startDate = new Date(active.startDate);
           let today = new Date();
-          if (adm?.isBillLocked && adm?.billLockedAt) {
+          if (adm?.billLockedAt) {
             today = new Date(adm.billLockedAt);
           } else if (adm?.status === "Discharged") {
             today = adm?.updatedAt ? new Date(adm.updatedAt) : new Date();
