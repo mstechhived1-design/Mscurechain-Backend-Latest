@@ -141,11 +141,21 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
 
     // Ward charges
     (breakdown.bedCharges?.items || []).forEach((item: any, idx: number) => {
+      let durationQty: string = item.readableDuration || `${Number((item.days || 1).toFixed(2))} Days`;
+      durationQty = durationQty
+        .replace(/Day\(s\)\s*/gi, 'Days, ')
+        .replace(/Hour\(s\)/gi, 'Hours')
+        .replace(/Mins/gi, 'Mins')
+        .trim();
+      if (durationQty.endsWith(',')) durationQty = durationQty.slice(0, -1);
+
       reportData.admissions.push({
         code: `BED${idx + 1}`,
+        date: item.startDate || admission.admissionDate,
         chargeType: `Ward Charges - Bed ${item.bedId || "N/A"} (${item.type || "N/A"})`,
         rate: item.rate || 0,
-        days: item.days || 1,
+        days: durationQty,
+        quantity: durationQty,
         amount: item.charge || 0,
       });
     });
@@ -157,6 +167,7 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
 
       const desc = item.description || item.serviceName || item.testName || item.medicineName || "Charge";
       const codeSuffix = item._id ? item._id.toString().slice(-6).toUpperCase() : `${idx + 1}`;
+      const itemTimestamp = item.date || item.createdAt || admission.admissionDate;
 
       if (item.isPharmaOrder || item.category === "Pharmacy" || item.category === "Medicine" ||
         (typeof desc === "string" && (desc.toLowerCase().includes("pharmacy") || desc.toLowerCase().includes("medicine")))) {
@@ -164,11 +175,11 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
           item.medicines.forEach((m: any, mIdx: number) => {
             const rawMedName = typeof m === "string" ? m : (m?.medicineName || m?.name || "Medicine");
             const actualMedName = typeof rawMedName === "object" ? (rawMedName.medicineName || rawMedName.name || "Medicine") : (String(rawMedName).trim() === "[object Object]" ? "Medicine" : String(rawMedName).trim());
-            reportData.meds.push({ code: `MED${codeSuffix}_${mIdx + 1}`, medicineName: actualMedName, rate: Number(m?.rate ?? 0), quantity: Number(m?.quantity ?? 1), amount: Number(m?.amount ?? 0) });
+            reportData.meds.push({ code: `MED${codeSuffix}_${mIdx + 1}`, date: m?.date || m?.createdAt || itemTimestamp, medicineName: actualMedName, rate: Number(m?.rate ?? 0), quantity: Number(m?.quantity ?? 1), amount: Number(m?.amount ?? 0) });
           });
         } else {
           const actualDesc = typeof desc === "object" ? (desc.medicineName || desc.name || "Medicine") : (String(desc).trim() === "[object Object]" ? "Medicine" : String(desc).trim());
-          reportData.meds.push({ code: `MED${codeSuffix}`, medicineName: actualDesc, rate: amount, quantity: 1, amount });
+          reportData.meds.push({ code: `MED${codeSuffix}`, date: itemTimestamp, medicineName: actualDesc, rate: amount, quantity: 1, amount });
         }
         return;
       }
@@ -181,22 +192,37 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
             const rawTestName = typeof t === "string" ? t : (t?.testName || t?.name || "Test");
             const actualTestName = typeof rawTestName === "object" ? (rawTestName.testName || rawTestName.name || "Test") : (String(rawTestName).trim() === "[object Object]" ? "Lab Test" : String(rawTestName).trim());
             const testRate = typeof t === "object" && (t.cost !== undefined || t.price !== undefined) ? Number(t.cost ?? t.price ?? ratePerTest) : ratePerTest;
-            reportData.diags.push({ code: `LAB${codeSuffix}_${tIdx + 1}`, testName: actualTestName, rate: testRate, quantity: 1, amount: testRate });
+            reportData.diags.push({ code: `LAB${codeSuffix}_${tIdx + 1}`, date: t?.date || t?.createdAt || itemTimestamp, testName: actualTestName, rate: testRate, quantity: 1, amount: testRate });
           });
         } else {
           const actualDesc = typeof desc === "object" ? (desc.testName || desc.name || "Diagnostics") : (String(desc).trim() === "[object Object]" ? "Diagnostics" : String(desc).trim());
-          reportData.diags.push({ code: `LAB${codeSuffix}`, testName: actualDesc, rate: amount, quantity: 1, amount });
+          reportData.diags.push({ code: `LAB${codeSuffix}`, date: itemTimestamp, testName: actualDesc, rate: amount, quantity: 1, amount });
         }
         return;
       }
 
-      const actualDesc = typeof desc === "object" ? (desc.serviceName || desc.doctorName || desc.name || "Charge") : (String(desc).trim() === "[object Object]" ? "Charge" : String(desc).trim());
+      let actualDesc = typeof desc === "object" ? (desc.serviceName || desc.doctorName || desc.name || "Charge") : (String(desc).trim() === "[object Object]" ? "Charge" : String(desc).trim());
+      let resolvedRate = amount;
+      let resolvedQuantity: number | string = 1;
+
+      const qtyMatch = actualDesc.match(/\((?:Qty\/Days|Qty|Days):\s*([0-9.]+)\)/i);
+      if (qtyMatch) {
+        const parsedQty = parseFloat(qtyMatch[1]);
+        if (!isNaN(parsedQty) && parsedQty > 0) {
+          resolvedQuantity = parsedQty;
+          resolvedRate = amount / parsedQty;
+          actualDesc = actualDesc.replace(/\s*\((?:Qty\/Days|Qty|Days):\s*[0-9.]+\)/i, '').trim();
+        }
+      }
+
       const section = classifyExtraCharge(item.category || "", actualDesc);
       const isGenericConsultDesc = !actualDesc || ["consult", "consultation charges", "consultation", "doctor consultation"].includes(actualDesc.toLowerCase());
       const resolvedDoctorName = section === "consultation" && isGenericConsultDesc && bookedDoctorName ? bookedDoctorName : actualDesc;
-      const resolvedRate = section === "consultation" && (!amount || amount <= 0) && bookedDoctorFee > 0 ? bookedDoctorFee : amount;
+      if (section === "consultation" && (!amount || amount <= 0) && bookedDoctorFee > 0) {
+        resolvedRate = bookedDoctorFee;
+      }
 
-      const chargeItem = { code: `SVC${codeSuffix}`, serviceName: actualDesc, doctorName: resolvedDoctorName, specialization: section === "consultation" ? bookedDoctorSpecialty : undefined, testName: actualDesc, chargeType: actualDesc, rate: resolvedRate, quantity: 1, visits: 1, days: 1, amount: resolvedRate };
+      const chargeItem = { code: `SVC${codeSuffix}`, date: itemTimestamp, serviceName: actualDesc, doctorName: resolvedDoctorName, specialization: section === "consultation" ? bookedDoctorSpecialty : undefined, testName: actualDesc, chargeType: actualDesc, rate: resolvedRate, quantity: resolvedQuantity, visits: 1, days: resolvedQuantity, amount };
 
       if (section === "consultation") reportData.doctors.push(chargeItem);
       else if (section === "radiology") reportData.rads.push(chargeItem);
@@ -206,7 +232,7 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
 
     // Fallback doctor consultation
     if (reportData.doctors.length === 0 && (bookedDoctorFee > 0 || (admission.primaryDoctor as any))) {
-      reportData.doctors.push({ code: "DOC1", doctorName: bookedDoctorName, specialization: bookedDoctorSpecialty, rate: bookedDoctorFee, quantity: 1, visits: 1, days: 1, amount: bookedDoctorFee });
+      reportData.doctors.push({ code: "DOC1", date: admission.admissionDate, doctorName: bookedDoctorName, specialization: bookedDoctorSpecialty, rate: bookedDoctorFee, quantity: 1, visits: 1, days: 1, amount: bookedDoctorFee });
     }
 
     // Radiology orders
@@ -224,13 +250,13 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
         (r.testName || "").toLowerCase().includes((order.bodyPart || "").toLowerCase())
       );
       if (!alreadyAdded) {
-        reportData.rads.push({ code: `RAD${order._id.toString().substring(18).toUpperCase()}`, testName, rate: 0, quantity: 1, amount: 0 });
+        reportData.rads.push({ code: `RAD${order._id.toString().substring(18).toUpperCase()}`, date: order.createdAt || admission.admissionDate, testName, rate: 0, quantity: 1, amount: 0 });
       }
     });
 
     // Payments
     reportData.payments = (breakdown.advances || []).map((adv: any) => ({
-      date: new Date(adv.date || adv.createdAt || Date.now()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+      date: adv.date || adv.createdAt || Date.now(),
       receiptNo: adv.reference || adv.receiptNumber || adv.transactionId || (adv._id ? adv._id.toString().slice(-6) : "ADV"),
       amount: adv.amount || 0,
       type: adv.transactionType || "Advance",
