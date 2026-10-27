@@ -1210,7 +1210,18 @@ export class HospitalAdminService {
                 hospital: 1,
                 amount: { $ifNull: ["$finalPayment", "$balance", 0] }, // DUE AMOUNT
                 totalBillAmount: { $ifNull: ["$totalBillAmount", 0] },
+                grandTotal: { $ifNull: ["$grandTotal", "$totalBillAmount", 0] },
                 advanceAmount: { $ifNull: ["$advanceAmount", 0] },
+                discount: {
+                  $ifNull: [
+                    "$discount",
+                    "$discountAmount",
+                    "$discountDetails.amount",
+                    "$financials.discount",
+                    0
+                  ]
+                },
+                discountDetails: { $ifNull: ["$discountDetails", null] },
                 paymentDetails: "$paymentDetails",
                 type: { $literal: "ipd_final_settlement" },
                 status: { $literal: "completed" },
