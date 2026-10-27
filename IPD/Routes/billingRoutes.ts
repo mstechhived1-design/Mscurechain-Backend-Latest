@@ -10,6 +10,7 @@ import {
   updateExtraCharge,
   updateBedOccupancyCharge,
   mergeExtraCharges,
+  unmergeExtraCharges,
 } from "../Controllers/IPDBillingController.js";
 import {
   getChargeCategories,
@@ -102,6 +103,19 @@ router.post(
     "pharma-owner",
   ),
   mergeExtraCharges,
+);
+router.post(
+  "/charge/unmerge",
+  authorize(
+    "helpdesk",
+    "nurse",
+    "doctor",
+    "staff",
+    "hospital-admin",
+    "super-admin",
+    "pharma-owner",
+  ),
+  unmergeExtraCharges,
 );
 router.put(
   "/bed-charge/:occupancyId",
