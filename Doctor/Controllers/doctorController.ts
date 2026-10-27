@@ -672,13 +672,13 @@ export const searchDoctors = async (req: Request, res: Response) => {
 
     const docs = await (DoctorProfile.find(filter) as any)
       .unscoped()
-      .select("specialties hospital consultationFee experienceStart consultationDuration isOnline")
+      .select("specialties hospital consultationFee experienceStart consultationDuration isOnline profilePic qualifications bio rating department")
       .populate({
         path: "user",
-        select: "name email mobile doctorId",
+        select: "name email mobile doctorId avatar image profilePic department",
         options: { unscoped: true } as any,
       })
-      .populate({ path: "hospital", select: "name address hospitalId" })
+      .populate({ path: "hospital", select: "name address hospitalId logo" })
       .lean();
 
     // Filter out doctors whose user record is missing/null

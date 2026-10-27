@@ -262,6 +262,7 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
       type: adv.transactionType || "Advance",
       mode: adv.mode || "Cash",
       paymentMode: adv.mode || "Cash",
+      status: "Paid",
       paymentDetails: adv.paymentDetails || undefined,
     }));
 

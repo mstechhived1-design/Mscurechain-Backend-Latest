@@ -1643,7 +1643,14 @@ export class HospitalAdminService {
                 _id: { $concat: [{ $toString: "$_id" }, "_", "$reportData.payments.id"] },
                 user: "$patient",
                 hospital: 1,
-                amount: { $toDouble: { $ifNull: ["$reportData.payments.amount", 0] } },
+                amount: {
+                  $convert: {
+                    input: "$reportData.payments.amount",
+                    to: "double",
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
                 type: { $literal: "ipd_bill_payment" },
                 status: { $literal: "completed" },
                 referenceId: { $concat: [{ $toString: "$_id" }, "_", "$reportData.payments.id"] },
@@ -1681,13 +1688,103 @@ export class HospitalAdminService {
         }
       });
 
+      // Safe double conversion helper to avoid aggregation crashes on non-numeric strings (e.g. "5 Hours", "2 Days")
+      const toSafeDouble = (path: string, fallback: number = 0) => ({
+        $convert: {
+          input: path,
+          to: "double",
+          onError: fallback,
+          onNull: fallback,
+        },
+      });
+
       // Manual Charges (Doctors, Admissions, Meds, Services, Diags)
       const chargeCategories = [
-        { field: "doctors", type: "opd", reasonField: "doctorName", amountFormula: { $multiply: [{ $toDouble: { $ifNull: ["$reportData.doctors.rate", 0] } }, { $toDouble: { $ifNull: ["$reportData.doctors.visits", 1] } }] } },
-        { field: "admissions", type: "other_charges", reasonField: "description", amountFormula: { $multiply: [{ $toDouble: { $ifNull: ["$reportData.admissions.rate", 0] } }, { $toDouble: { $ifNull: ["$reportData.admissions.days", 1] } }] } },
-        { field: "meds", type: "pharmacy", reasonField: "medicineName", amountFormula: { $multiply: [{ $toDouble: { $ifNull: ["$reportData.meds.rate", 0] } }, { $toDouble: { $ifNull: ["$reportData.meds.quantity", 1] } }] } },
-        { field: "services", type: "other_charges", reasonField: "serviceName", amountFormula: { $multiply: [{ $toDouble: { $ifNull: ["$reportData.services.rate", 0] } }, { $toDouble: { $ifNull: ["$reportData.services.quantity", 1] } }] } },
-        { field: "diags", type: "lab_test", reasonField: "testName", amountFormula: { $multiply: [{ $toDouble: { $ifNull: ["$reportData.diags.rate", 0] } }, { $toDouble: { $ifNull: ["$reportData.diags.quantity", 1] } }] } }
+        {
+          field: "doctors",
+          type: "opd",
+          reasonField: "doctorName",
+          amountFormula: {
+            $cond: {
+              if: { $gt: [toSafeDouble("$reportData.doctors.amount", 0), 0] },
+              then: toSafeDouble("$reportData.doctors.amount", 0),
+              else: {
+                $multiply: [
+                  toSafeDouble("$reportData.doctors.rate", 0),
+                  toSafeDouble("$reportData.doctors.visits", 1),
+                ],
+              },
+            },
+          },
+        },
+        {
+          field: "admissions",
+          type: "other_charges",
+          reasonField: "description",
+          amountFormula: {
+            $cond: {
+              if: { $gt: [toSafeDouble("$reportData.admissions.amount", 0), 0] },
+              then: toSafeDouble("$reportData.admissions.amount", 0),
+              else: {
+                $multiply: [
+                  toSafeDouble("$reportData.admissions.rate", 0),
+                  toSafeDouble("$reportData.admissions.days", 1),
+                ],
+              },
+            },
+          },
+        },
+        {
+          field: "meds",
+          type: "pharmacy",
+          reasonField: "medicineName",
+          amountFormula: {
+            $cond: {
+              if: { $gt: [toSafeDouble("$reportData.meds.amount", 0), 0] },
+              then: toSafeDouble("$reportData.meds.amount", 0),
+              else: {
+                $multiply: [
+                  toSafeDouble("$reportData.meds.rate", 0),
+                  toSafeDouble("$reportData.meds.quantity", 1),
+                ],
+              },
+            },
+          },
+        },
+        {
+          field: "services",
+          type: "other_charges",
+          reasonField: "serviceName",
+          amountFormula: {
+            $cond: {
+              if: { $gt: [toSafeDouble("$reportData.services.amount", 0), 0] },
+              then: toSafeDouble("$reportData.services.amount", 0),
+              else: {
+                $multiply: [
+                  toSafeDouble("$reportData.services.rate", 0),
+                  toSafeDouble("$reportData.services.quantity", 1),
+                ],
+              },
+            },
+          },
+        },
+        {
+          field: "diags",
+          type: "lab_test",
+          reasonField: "testName",
+          amountFormula: {
+            $cond: {
+              if: { $gt: [toSafeDouble("$reportData.diags.amount", 0), 0] },
+              then: toSafeDouble("$reportData.diags.amount", 0),
+              else: {
+                $multiply: [
+                  toSafeDouble("$reportData.diags.rate", 0),
+                  toSafeDouble("$reportData.diags.quantity", 1),
+                ],
+              },
+            },
+          },
+        },
       ];
 
       for (const cat of chargeCategories) {
