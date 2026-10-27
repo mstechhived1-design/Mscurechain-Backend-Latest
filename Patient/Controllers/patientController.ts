@@ -71,8 +71,9 @@ export const updateProfile = async (req: Request, res: Response) => {
     const { name, email, dob, ...profileData } = updateReq.body;
 
     // Update Patient model if identity or global fields are provided
+    const avatarInput = updateReq.body.avatar || updateReq.body.profilePic || updateReq.body.image;
     if (
-      name || email || dob || 
+      name || email || dob || avatarInput ||
       updateReq.body.mobile || updateReq.body.age || updateReq.body.gender ||
       updateReq.body.height || updateReq.body.weight || updateReq.body.address ||
       updateReq.body.bloodGroup || updateReq.body.allergies || updateReq.body.conditions ||
@@ -81,6 +82,7 @@ export const updateProfile = async (req: Request, res: Response) => {
       const updates: any = {};
       if (name) updates.name = name;
       if (email) updates.email = email;
+      if (avatarInput) updates.avatar = avatarInput;
       if (updateReq.body.mobile) updates.mobile = updateReq.body.mobile;
       if (updateReq.body.age) updates.age = Number(updateReq.body.age);
       if (updateReq.body.gender) updates.gender = updateReq.body.gender;
@@ -148,10 +150,10 @@ export const updateProfile = async (req: Request, res: Response) => {
         profile._id,
         { $set: profileUpdates },
         { new: true }
-      ).unscoped().populate("user", "name email mobile role age gender height weight bloodGroup address allergies conditions emergencyContactName emergencyContactPhone emergencyContactRelation");
+      ).unscoped().populate("user", "name email mobile role avatar age gender height weight bloodGroup address allergies conditions emergencyContactName emergencyContactPhone emergencyContactRelation");
     } else {
       // If no profile exists, return updated user info with all fields
-      const updatedUser = await (Patient as any).findById(updateReq.user!._id).select("name email mobile age gender dateOfBirth height weight bloodGroup address allergies conditions emergencyContactName emergencyContactPhone emergencyContactRelation");
+      const updatedUser = await (Patient as any).findById(updateReq.user!._id).select("name email mobile role avatar age gender dateOfBirth height weight bloodGroup address allergies conditions emergencyContactName emergencyContactPhone emergencyContactRelation");
       return res.json({
         user: updatedUser,
         message: "Identity updated. Visit a hospital to complete clinical profile."
@@ -534,6 +536,7 @@ export const getFamilyMembers = async (req: Request, res: Response) => {
         conditions: p.conditions || "",
         relationship,
         isCurrent,
+        avatar: p.avatar || prof?.avatar || "",
       };
     });
 
@@ -756,6 +759,7 @@ export const switchFamilyMember = async (req: Request, res: Response) => {
         bloodGroup: targetPatient.bloodGroup || (targetProfile as any)?.bloodGroup || "Unknown",
         mrn: (targetProfile as any)?.mrn || `MSC-${targetPatient._id.toString().slice(-6).toUpperCase()}`,
         hospitals: targetPatient.hospitals,
+        avatar: targetPatient.avatar || (targetProfile as any)?.avatar || "",
       },
     });
   } catch (err: any) {

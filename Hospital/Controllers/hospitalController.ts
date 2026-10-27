@@ -45,7 +45,7 @@ export const listHospitals = async (req: Request, res: Response) => {
     const filter: any = {};
     if (speciality) filter.specialities = speciality;
     const hospitals = await Hospital.find(filter)
-      .select("name address location phone specialities status branches")
+      .select("name address location phone specialities status branches logo buildingImages website locationLink googleMapLink rating city state pincode establishedYear")
       .lean()
       .limit(200);
     res.json(hospitals);

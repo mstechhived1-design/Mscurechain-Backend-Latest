@@ -42,6 +42,9 @@ export interface IHospital extends Document {
   ambulanceAvailability?: boolean;
   rating?: number;
   website?: string;
+  locationLink?: string;
+  googleMapLink?: string;
+  buildingImages?: string[];
   operatingHours?: string;
   status?: "pending" | "approved" | "suspended";
   branches?: IBranch[];
@@ -95,3 +98,4 @@ export interface IPortalLicense {
   startDate?: Date;
   endDate?: Date;
 }
+

@@ -362,6 +362,7 @@ export const getIPDFinalBill = async (req: Request, res: Response) => {
       type: adv.transactionType || "Advance",
       mode: adv.mode || "Cash",
       paymentMode: adv.mode || "Cash",
+      status: "Paid",
       paymentDetails: adv.paymentDetails || undefined,
     }));
 

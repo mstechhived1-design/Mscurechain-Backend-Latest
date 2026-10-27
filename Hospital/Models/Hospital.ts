@@ -51,6 +51,9 @@ const hospitalSchema = new Schema<IHospital>(
     ambulanceAvailability: { type: Boolean, default: false },
     rating: Number,
     website: String,
+    locationLink: String,
+    googleMapLink: String,
+    buildingImages: { type: [String], default: [] },
     operatingHours: String,
     status: {
       type: String,
