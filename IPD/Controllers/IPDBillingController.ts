@@ -978,3 +978,64 @@ export const updateBedOccupancyCharge = asyncHandler(async (req: any, res: Respo
 
   res.json({ message: "Bed charge updated successfully", occupancy });
 });
+
+/**
+ * POST /api/v1/ipd/billing/charge/merge
+ * Merges multiple extra charge documents into a single consolidated row.
+ * Body: { primaryChargeId, mergeChargeIds: string[], mergedDescription, mergedAmount }
+ */
+export const mergeExtraCharges = asyncHandler(async (req: any, res: Response) => {
+  const { primaryChargeId, mergeChargeIds, mergedDescription, mergedAmount } = req.body;
+
+  if (!primaryChargeId || !Array.isArray(mergeChargeIds) || mergeChargeIds.length === 0) {
+    throw new ApiError(400, "primaryChargeId and at least one mergeChargeId are required");
+  }
+
+  const primaryCharge = await IPDExtraCharge.findById(primaryChargeId);
+  if (!primaryCharge) throw new ApiError(404, "Primary charge not found");
+
+  const admission = await IPDAdmission.findById(primaryCharge.admission);
+  if (!admission) throw new ApiError(404, "Admission not found");
+  if (admission.isBillLocked) throw new ApiError(400, "Bill is locked. Cannot merge charges.");
+
+  // Collect secondary charges and validate they belong to the same admission
+  const secondaryCharges = await IPDExtraCharge.find({
+    _id: { $in: mergeChargeIds },
+    admission: admission._id,
+  });
+
+  if (secondaryCharges.length !== mergeChargeIds.length) {
+    throw new ApiError(400, "One or more secondary charges not found or belong to a different admission");
+  }
+
+  // Total amount of secondary charges being removed
+  const secondaryTotal = secondaryCharges.reduce((sum: number, c: any) => sum + c.amount, 0);
+
+  // Net adjustment = mergedAmount - primaryCharge.amount - secondaryTotal
+  const netAdjustment = Number(mergedAmount) - Number(primaryCharge.amount) - secondaryTotal;
+
+  // Update primary charge
+  primaryCharge.description = mergedDescription;
+  primaryCharge.amount = Number(mergedAmount);
+  await primaryCharge.save();
+
+  // Delete secondary charges
+  await IPDExtraCharge.deleteMany({ _id: { $in: mergeChargeIds } });
+
+  // Adjust admission total only if there is a discrepancy (should be 0 in normal use)
+  if (netAdjustment !== 0) {
+    await IPDAdmission.findByIdAndUpdate(admission._id, {
+      $inc: { totalBilledAmount: netAdjustment },
+    });
+  }
+
+  // Clear cache
+  await redisService.del(`ipd:bill:${admission._id}`);
+  await redisService.del(`ipd:bill:${admission.admissionId}`);
+
+  res.json({
+    message: "Charges merged successfully",
+    primaryCharge,
+    mergedCount: secondaryCharges.length,
+  });
+});
