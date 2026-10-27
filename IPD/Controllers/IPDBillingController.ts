@@ -1014,7 +1014,38 @@ export const mergeExtraCharges = asyncHandler(async (req: any, res: Response) =>
   // Net adjustment = mergedAmount - primaryCharge.amount - secondaryTotal
   const netAdjustment = Number(mergedAmount) - Number(primaryCharge.amount) - secondaryTotal;
 
+  // Preserve constituent original charges for unmerge
+  const originalPrimary = {
+    _id: primaryCharge._id,
+    patient: primaryCharge.patient,
+    globalPatientId: primaryCharge.globalPatientId,
+    admission: primaryCharge.admission,
+    hospital: primaryCharge.hospital,
+    category: primaryCharge.category,
+    description: primaryCharge.description,
+    amount: primaryCharge.amount,
+    date: primaryCharge.date,
+    addedBy: primaryCharge.addedBy,
+    status: primaryCharge.status,
+  };
+
+  const originalSecondaries = secondaryCharges.map((c: any) => ({
+    _id: c._id,
+    patient: c.patient,
+    globalPatientId: c.globalPatientId,
+    admission: c.admission,
+    hospital: c.hospital,
+    category: c.category,
+    description: c.description,
+    amount: c.amount,
+    date: c.date,
+    addedBy: c.addedBy,
+    status: c.status,
+  }));
+
   // Update primary charge
+  primaryCharge.isMerged = true;
+  primaryCharge.mergedFrom = [originalPrimary, ...originalSecondaries];
   primaryCharge.description = mergedDescription;
   primaryCharge.amount = Number(mergedAmount);
   await primaryCharge.save();
@@ -1037,5 +1068,188 @@ export const mergeExtraCharges = asyncHandler(async (req: any, res: Response) =>
     message: "Charges merged successfully",
     primaryCharge,
     mergedCount: secondaryCharges.length,
+  });
+});
+
+/**
+ * POST /api/v1/ipd/billing/charge/unmerge
+ * Restores a merged extra charge back into its original individual charges.
+ * Body: { chargeId: string }
+ */
+export const unmergeExtraCharges = asyncHandler(async (req: any, res: Response) => {
+  const { chargeId } = req.body;
+
+  if (!chargeId) {
+    throw new ApiError(400, "chargeId is required");
+  }
+
+  const mergedCharge = await IPDExtraCharge.findById(chargeId);
+  if (!mergedCharge) throw new ApiError(404, "Charge not found");
+  const admission = await IPDAdmission.findById(mergedCharge.admission);
+  if (!admission) throw new ApiError(404, "Admission not found");
+  if (admission.isBillLocked) throw new ApiError(400, "Bill is locked. Cannot unmerge charges.");
+
+  if (Array.isArray(mergedCharge.mergedFrom) && mergedCharge.mergedFrom.length >= 2) {
+    const [originalPrimary, ...originalSecondaries] = mergedCharge.mergedFrom;
+
+    // Restore primary charge back to its original state
+    mergedCharge.description = originalPrimary.description;
+    mergedCharge.amount = Number(originalPrimary.amount);
+    mergedCharge.category = (originalPrimary.category || mergedCharge.category) as any;
+    mergedCharge.isMerged = false;
+    mergedCharge.mergedFrom = undefined;
+    await mergedCharge.save();
+
+    // Re-create the secondary charges
+    const restoredSecondaries = originalSecondaries.map((sec: any) => ({
+      patient: sec.patient || mergedCharge.patient,
+      globalPatientId: sec.globalPatientId || mergedCharge.globalPatientId,
+      admission: sec.admission || mergedCharge.admission,
+      hospital: sec.hospital || mergedCharge.hospital,
+      category: (sec.category || mergedCharge.category) as any,
+      description: sec.description,
+      amount: Number(sec.amount),
+      date: sec.date || new Date(),
+      addedBy: sec.addedBy || mergedCharge.addedBy,
+      status: sec.status || "Active",
+    }));
+
+    if (restoredSecondaries.length > 0) {
+      await IPDExtraCharge.insertMany(restoredSecondaries);
+    }
+  } else {
+    // Dynamic Fallback: unmerge charges based on Qty/Days or multi-duration text
+    const desc = mergedCharge.description || "";
+    const totalAmt = Number(mergedCharge.amount || 0);
+
+    // 1. Check for (Qty/Days: N) where N > 1
+    const qtyMatch = desc.match(/\((?:Qty\/Days|Qty|Days):\s*([0-9.]+)\)/i);
+    if (qtyMatch && parseFloat(qtyMatch[1]) > 1) {
+      const qty = Math.round(parseFloat(qtyMatch[1]));
+      const baseName = desc.replace(/\s*\((?:Qty\/Days|Qty|Days):\s*[0-9.]+\)/i, "").trim();
+      const perAmt = Math.round(totalAmt / qty);
+
+      // Primary charge gets 1 portion
+      mergedCharge.description = `${baseName} (Qty/Days: 1)`;
+      mergedCharge.amount = perAmt;
+      mergedCharge.isMerged = false;
+      mergedCharge.mergedFrom = undefined;
+      await mergedCharge.save();
+
+      // Create remaining secondary charges
+      let allocated = perAmt;
+      const newCharges: any[] = [];
+      for (let i = 1; i < qty; i++) {
+        const isLast = i === qty - 1;
+        const amt = isLast ? (totalAmt - allocated) : perAmt;
+        allocated += amt;
+        newCharges.push({
+          patient: mergedCharge.patient,
+          globalPatientId: mergedCharge.globalPatientId,
+          admission: mergedCharge.admission,
+          hospital: mergedCharge.hospital,
+          category: mergedCharge.category,
+          description: `${baseName} (Qty/Days: 1)`,
+          amount: amt,
+          date: mergedCharge.date || new Date(),
+          addedBy: mergedCharge.addedBy,
+          status: "Active",
+        });
+      }
+      if (newCharges.length > 0) {
+        await IPDExtraCharge.insertMany(newCharges);
+      }
+    } else {
+      // 2. Check for multi-duration text (e.g. "24 HOURS  6HOURS 14MINTUES" or "2DAYS 5HOURS 1DAY")
+      const parenMatch = desc.match(/\(([^)]+)\)\s*$/);
+      if (parenMatch) {
+        const inner = parenMatch[1];
+        const baseName = desc.replace(/\s*\([^)]+\)\s*$/, "").trim();
+
+        // Tokenize duration units: DAYS -> HOURS -> MINS
+        const tokenRegex = /(\d+)\s*(DAYS?|HOURS?|HRS?|MIN\w*)/gi;
+        const tokens: { text: string; val: number; unit: string }[] = [];
+        let m: RegExpExecArray | null;
+        while ((m = tokenRegex.exec(inner)) !== null) {
+          const u = m[2].toUpperCase();
+          tokens.push({
+            text: m[0],
+            val: parseInt(m[1]),
+            unit: u.startsWith("D") ? "D" : u.startsWith("H") ? "H" : "M",
+          });
+        }
+
+        const unitOrder: Record<string, number> = { D: 1, H: 2, M: 3 };
+        const segments: string[] = [];
+        let currentSeg: string[] = [];
+        let lastUnit = 0;
+
+        for (const t of tokens) {
+          const ord = unitOrder[t.unit];
+          if (currentSeg.length > 0 && ord <= lastUnit) {
+            segments.push(currentSeg.join(" "));
+            currentSeg = [];
+          }
+          currentSeg.push(t.text);
+          lastUnit = ord;
+        }
+        if (currentSeg.length > 0) segments.push(currentSeg.join(" "));
+
+        if (segments.length >= 2) {
+          const parseMins = (str: string) => {
+            const d = parseInt(str.match(/(\d+)\s*DAYS?/i)?.[1] || "0");
+            const h = parseInt(str.match(/(\d+)\s*HOURS?/i)?.[1] || "0");
+            const min = parseInt(str.match(/(\d+)\s*MIN/i)?.[1] || "0");
+            return d * 1440 + h * 60 + min;
+          };
+
+          const segMins = segments.map(parseMins);
+          const totalMins = segMins.reduce((a, b) => a + b, 0);
+
+          const firstAmt = totalMins > 0 ? Math.round((segMins[0] / totalMins) * totalAmt) : Math.round(totalAmt / segments.length);
+          mergedCharge.description = `${baseName} (${segments[0].trim()})`;
+          mergedCharge.amount = firstAmt;
+          mergedCharge.isMerged = false;
+          mergedCharge.mergedFrom = undefined;
+          await mergedCharge.save();
+
+          let allocated = firstAmt;
+          const newCharges: any[] = [];
+          for (let i = 1; i < segments.length; i++) {
+            const isLast = i === segments.length - 1;
+            const amt = isLast ? (totalAmt - allocated) : (totalMins > 0 ? Math.round((segMins[i] / totalMins) * totalAmt) : Math.round(totalAmt / segments.length));
+            allocated += amt;
+            newCharges.push({
+              patient: mergedCharge.patient,
+              globalPatientId: mergedCharge.globalPatientId,
+              admission: mergedCharge.admission,
+              hospital: mergedCharge.hospital,
+              category: mergedCharge.category,
+              description: `${baseName} (${segments[i].trim()})`,
+              amount: amt,
+              date: mergedCharge.date || new Date(),
+              addedBy: mergedCharge.addedBy,
+              status: "Active",
+            });
+          }
+          if (newCharges.length > 0) {
+            await IPDExtraCharge.insertMany(newCharges);
+          }
+        } else {
+          throw new ApiError(400, "Cannot determine individual constituent charges to unmerge");
+        }
+      } else {
+        throw new ApiError(400, "This charge does not contain multiple durations or quantities to unmerge");
+      }
+    }
+  }
+
+  // Clear cache
+  await redisService.del(`ipd:bill:${admission._id}`);
+  await redisService.del(`ipd:bill:${admission.admissionId}`);
+
+  res.json({
+    message: "Charges unmerged successfully",
+    primaryCharge: mergedCharge,
   });
 });

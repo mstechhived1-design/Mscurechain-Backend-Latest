@@ -29,6 +29,8 @@ const ipdExtraChargeSchema = new Schema<IIPDExtraCharge>(
       default: "Active",
     },
     reversalReason: { type: String },
+    isMerged: { type: Boolean, default: false },
+    mergedFrom: { type: [Schema.Types.Mixed], default: undefined },
   },
   { timestamps: true },
 );

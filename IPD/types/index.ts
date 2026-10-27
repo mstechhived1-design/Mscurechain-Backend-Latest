@@ -116,6 +116,15 @@ export interface IIPDExtraCharge extends Document {
   addedBy: Types.ObjectId;
   status: "Active" | "Reversed";
   reversalReason?: string;
+  isMerged?: boolean;
+  mergedFrom?: Array<{
+    _id?: any;
+    description: string;
+    amount: number;
+    category: string;
+    date: Date;
+    addedBy?: any;
+  }>;
 }
 
 export interface IIPDAdvancePayment extends Document {
