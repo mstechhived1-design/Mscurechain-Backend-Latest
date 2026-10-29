@@ -93,9 +93,10 @@ router.post("/appointments/:id/check-in", checkInAppointment);
 router.patch("/appointments/:id/status", updateAppointmentStatus);
 
 // Transactions
-import { getTransactions, editTransaction } from "../../Admin/Controllers/adminController.js";
+import { getTransactions, editTransaction, deleteTransaction } from "../../Admin/Controllers/adminController.js";
 router.get("/transactions", authorizeRoles("helpdesk", "masterhelpdesk", "hospital-admin", "admin", "super-admin", "frontdesk", "staff"), getTransactions);
 router.patch("/transactions/:id/edit", authorizeRoles("helpdesk", "masterhelpdesk", "hospital-admin", "admin", "super-admin", "frontdesk", "staff"), editTransaction);
+router.delete("/transactions/:id", authorizeRoles("helpdesk", "masterhelpdesk", "hospital-admin", "admin", "super-admin", "frontdesk", "staff"), deleteTransaction);
 
 // Packages
 router.get("/packages", authorizeRoles("helpdesk", "masterhelpdesk"), getPackages);
