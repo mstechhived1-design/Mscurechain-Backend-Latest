@@ -44,6 +44,7 @@ import {
   getPayrollById,
   generatePayroll,
   editTransaction,
+  deleteTransaction,
   updatePayrollStatus,
   updatePayroll,
   getEmployeePayrollStats,
@@ -242,6 +243,7 @@ router.patch(
 );
 router.get("/transactions", cacheMiddleware(60), getTransactions); // 1 min (high frequency)
 router.patch("/transactions/:id/edit", authorizeRoles("hospital-admin", "super-admin", "admin", "masterhelpdesk"), editTransaction);
+router.delete("/transactions/:id", authorizeRoles("hospital-admin", "super-admin", "admin", "masterhelpdesk"), deleteTransaction);
 
 // ✅ RESOURCE MANAGEMENT: With Invalidation Hooks
 router.get(

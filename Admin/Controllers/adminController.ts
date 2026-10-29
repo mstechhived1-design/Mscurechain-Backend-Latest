@@ -2320,6 +2320,11 @@ export const getTransactions = async (req: Request, res: Response) => {
         patientMobile: t.user?.mobile || t.referenceId?.phone || t.patientDetails?.mobile || t.patientDetails?.phone || t.phone || "N/A",
         paymentMethod: t.paymentMode || "cash",
         amount: t.amount || 0,
+        discount: t.discount || t.discountAmount || t.paymentDetails?.discount || t.referenceId?.discount || t.referenceId?.discountDetails?.amount || t.referenceId?.financials?.discount || 0,
+        discountDetails: t.discountDetails || t.referenceId?.discountDetails,
+        totalBillAmount: t.totalBillAmount || t.referenceId?.totalBillAmount || t.grandTotal || t.referenceId?.grandTotal,
+        grandTotal: t.grandTotal || t.totalBillAmount || t.referenceId?.grandTotal || t.referenceId?.totalBillAmount,
+        advanceAmount: t.advanceAmount || t.referenceId?.advanceAmount,
         createdAt: t.createdAt || t.date || t.sortDate,
         date: t.date || t.createdAt,
         transactionTime: t.createdAt || t.date || t.sortDate,
@@ -2628,6 +2633,341 @@ export const editTransaction = async (req: Request, res: Response) => {
     res.json({ success: true, message: "Transaction successfully updated" });
   } catch (err: any) {
     console.error("editTransaction error:", err);
+    res.status(500).json({ success: false, message: err?.message || "Internal Server Error" });
+  }
+};
+
+export const deleteTransaction = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { type, referenceId, invoiceNumber, reason } = (req.body || {}) as any;
+    const user = (req as any).user;
+    
+    const mongoose = (await import('mongoose')).default;
+    const hospitalId = (req as any).user?.hospital || req.headers["x-hospital-id"] || (req as any).hospitalId;
+
+    if (!hospitalId) {
+      return res.status(400).json({ message: "Hospital ID required" });
+    }
+
+    const hospitalObjId = mongoose.Types.ObjectId.isValid(hospitalId) ? new mongoose.Types.ObjectId(hospitalId) : null;
+    const hospitalMatch = hospitalObjId ? { $in: [hospitalObjId, String(hospitalId)] } : hospitalId;
+
+    let targetRef = referenceId;
+    if (typeof targetRef === 'object' && targetRef?._id) targetRef = targetRef._id;
+    if (!targetRef) targetRef = id;
+    if (typeof targetRef === 'object' && targetRef?._id) targetRef = targetRef._id;
+
+    const docIdStr = String(targetRef || '').trim();
+    const idStr = String(id || '').trim();
+    const invStr = String(invoiceNumber || '').trim();
+    const candidateIds = Array.from(new Set([docIdStr, idStr])).filter(x => x && mongoose.Types.ObjectId.isValid(x));
+    const normType = String(type || '').toLowerCase().trim();
+
+    let deleted = false;
+
+    // 1. Compound ID or MANUAL_ ID in TransactionReport (e.g., <reportId>_<subId> or MANUAL_DIAGS_<subId>)
+    const isCompound = docIdStr.includes('_') || idStr.includes('_') || invStr.includes('_');
+    if (isCompound) {
+      let reportId = '';
+      let subId = '';
+
+      if (docIdStr.includes('_') && mongoose.Types.ObjectId.isValid(docIdStr.split('_')[0])) {
+        [reportId, subId] = docIdStr.split('_');
+      } else if (idStr.includes('_') && mongoose.Types.ObjectId.isValid(idStr.split('_')[0])) {
+        [reportId, subId] = idStr.split('_');
+      }
+
+      // If subId is like "MANUAL_DIAGS_Z4GEV6C", extract the tail
+      const subKey = (subId || docIdStr.split('_').pop() || idStr.split('_').pop() || invStr.split('_').pop() || '').toLowerCase().trim();
+
+      if (reportId && mongoose.Types.ObjectId.isValid(reportId)) {
+        const TransactionReport = mongoose.model("TransactionReport");
+        const rep = await TransactionReport.findOne({ _id: reportId, hospital: hospitalMatch });
+        if (rep && rep.reportData) {
+          let itemRemoved = false;
+          let removedAmount = 0;
+
+          // Check all possible categories in reportData (diags, services, payments, etc.)
+          const categories = ['diags', 'services', 'diagnostics', 'investigations', 'procedures', 'consultations', 'payments'];
+          for (const cat of categories) {
+            if (Array.isArray(rep.reportData[cat])) {
+              const prevLen = rep.reportData[cat].length;
+              const matchingItem = rep.reportData[cat].find((x: any) => {
+                const itemId = String(x?.id || x?._id || '').toLowerCase();
+                return itemId === subKey || itemId === String(subId).toLowerCase();
+              });
+
+              if (matchingItem) {
+                removedAmount += Number(matchingItem.amount || (matchingItem.rate * (matchingItem.quantity || 1)) || 0);
+              }
+
+              rep.reportData[cat] = rep.reportData[cat].filter((x: any) => {
+                const itemId = String(x?.id || x?._id || '').toLowerCase();
+                return itemId !== subKey && itemId !== String(subId).toLowerCase();
+              });
+
+              if (rep.reportData[cat].length !== prevLen) {
+                itemRemoved = true;
+              }
+            }
+          }
+
+          // Also check all other arrays in reportData
+          for (const key of Object.keys(rep.reportData)) {
+            if (!categories.includes(key) && Array.isArray(rep.reportData[key])) {
+              const prevLen = rep.reportData[key].length;
+              rep.reportData[key] = rep.reportData[key].filter((x: any) => {
+                const itemId = String(x?.id || x?._id || '').toLowerCase();
+                return itemId !== subKey && itemId !== String(subId).toLowerCase();
+              });
+              if (rep.reportData[key].length !== prevLen) {
+                itemRemoved = true;
+              }
+            }
+          }
+
+          if (itemRemoved) {
+            if (rep.totals) {
+              rep.totals.grandTotal = Math.max(0, (rep.totals.grandTotal || 0) - removedAmount);
+              rep.totals.totalPaid = Math.max(0, (rep.totals.totalPaid || 0) - removedAmount);
+            }
+            rep.isEdited = true;
+            rep.editReason = `Deleted manual item ${subKey}`;
+            rep.editedAt = new Date();
+            rep.markModified("reportData");
+            rep.markModified("totals");
+            await rep.save();
+            deleted = true;
+          }
+        }
+      }
+    }
+
+    // 1b. Fallback for MANUAL_ charge code lookup across TransactionReports
+    if (!deleted && (idStr.toUpperCase().includes("MANUAL_") || invStr.toUpperCase().includes("MANUAL_"))) {
+      const fullCode = idStr.toUpperCase().includes("MANUAL_") ? idStr : invStr;
+      const code = fullCode.split('_').pop()?.toLowerCase();
+      if (code) {
+        const TransactionReport = mongoose.model("TransactionReport");
+        const reports = await TransactionReport.find({
+          hospital: hospitalMatch,
+          $or: [
+            { "reportData.diags.id": new RegExp(`^${code}$`, 'i') },
+            { "reportData.services.id": new RegExp(`^${code}$`, 'i') },
+            { "reportData.payments.id": new RegExp(`^${code}$`, 'i') },
+          ]
+        });
+
+        for (const rep of reports) {
+          let itemRemoved = false;
+          let removedAmount = 0;
+          for (const cat of ['diags', 'services', 'diagnostics', 'investigations', 'procedures', 'consultations', 'payments']) {
+            if (Array.isArray(rep.reportData?.[cat])) {
+              const prevLen = rep.reportData[cat].length;
+              const matchingItem = rep.reportData[cat].find((x: any) => String(x?.id || x?._id || '').toLowerCase() === code);
+              if (matchingItem) {
+                removedAmount += Number(matchingItem.amount || (matchingItem.rate * (matchingItem.quantity || 1)) || 0);
+              }
+              rep.reportData[cat] = rep.reportData[cat].filter((x: any) => String(x?.id || x?._id || '').toLowerCase() !== code);
+              if (rep.reportData[cat].length !== prevLen) {
+                itemRemoved = true;
+              }
+            }
+          }
+
+          if (itemRemoved) {
+            if (rep.totals) {
+              rep.totals.grandTotal = Math.max(0, (rep.totals.grandTotal || 0) - removedAmount);
+              rep.totals.totalPaid = Math.max(0, (rep.totals.totalPaid || 0) - removedAmount);
+            }
+            rep.isEdited = true;
+            rep.editReason = `Deleted manual item ${code}`;
+            rep.editedAt = new Date();
+            rep.markModified("reportData");
+            rep.markModified("totals");
+            await rep.save();
+            deleted = true;
+          }
+        }
+      }
+    }
+
+    // 2. Try delete from LabOrder (and linked Transaction)
+    const tryDeleteLabOrder = async (targetId: string) => {
+      const LabOrder = mongoose.model("LabOrder");
+      const queryList: any[] = [];
+      if (mongoose.Types.ObjectId.isValid(targetId)) queryList.push({ _id: targetId });
+      if (idStr) queryList.push({ sampleId: idStr }, { orderId: idStr }, { invoiceNumber: idStr }, { sampleNumber: idStr });
+      if (invStr) queryList.push({ sampleId: invStr }, { orderId: invStr }, { invoiceNumber: invStr }, { sampleNumber: invStr });
+
+      const lab = await LabOrder.findOne({
+        $or: queryList,
+        hospital: hospitalMatch
+      }) || (mongoose.Types.ObjectId.isValid(targetId) ? await LabOrder.findById(targetId) : null);
+
+      if (lab) {
+        if (lab.invoiceId) {
+          const Transaction = mongoose.model("Transaction");
+          await Transaction.deleteMany({ _id: lab.invoiceId });
+        }
+        await LabOrder.deleteOne({ _id: lab._id });
+        return true;
+      }
+      return false;
+    };
+
+    // 3. Try delete from Appointment
+    const tryDeleteAppointment = async (targetId: string) => {
+      const Appointment = mongoose.model("Appointment");
+      const queryList: any[] = [];
+      if (mongoose.Types.ObjectId.isValid(targetId)) queryList.push({ _id: targetId });
+      if (idStr) queryList.push({ appointmentId: idStr }, { tokenNumber: idStr }, { transactionId: idStr });
+      if (invStr) queryList.push({ appointmentId: invStr }, { tokenNumber: invStr }, { transactionId: invStr });
+
+      const apt = await Appointment.findOne({
+        $or: queryList,
+        hospital: hospitalMatch
+      }) || (mongoose.Types.ObjectId.isValid(targetId) ? await Appointment.findById(targetId) : null);
+
+      if (apt) {
+        await Appointment.deleteOne({ _id: apt._id });
+        return true;
+      }
+      return false;
+    };
+
+    // 4. Try delete from IPDAdvancePayment
+    const tryDeleteIPDAdvance = async (targetId: string) => {
+      const IPDAdvancePayment = mongoose.model("IPDAdvancePayment");
+      const queryList: any[] = [];
+      if (mongoose.Types.ObjectId.isValid(targetId)) queryList.push({ _id: targetId });
+      if (idStr) queryList.push({ receiptNumber: idStr }, { transactionId: idStr }, { invoiceNumber: idStr });
+      if (invStr) queryList.push({ receiptNumber: invStr }, { transactionId: invStr }, { invoiceNumber: invStr });
+
+      const ipdAdv = await IPDAdvancePayment.findOne({
+        $or: queryList,
+        hospital: hospitalMatch
+      }) || (mongoose.Types.ObjectId.isValid(targetId) ? await IPDAdvancePayment.findById(targetId) : null);
+
+      if (ipdAdv) {
+        await IPDAdvancePayment.deleteOne({ _id: ipdAdv._id });
+        return true;
+      }
+      return false;
+    };
+
+    // 5. Try delete from DischargeRecord
+    const tryDeleteDischarge = async (targetId: string) => {
+      const DischargeRecord = mongoose.model("DischargeRecord");
+      const queryList: any[] = [];
+      if (mongoose.Types.ObjectId.isValid(targetId)) queryList.push({ _id: targetId });
+      if (idStr) queryList.push({ invoiceNumber: idStr }, { dischargeId: idStr });
+      if (invStr) queryList.push({ invoiceNumber: invStr }, { dischargeId: invStr });
+
+      const dis = await DischargeRecord.findOne({
+        $or: queryList,
+        hospital: hospitalMatch
+      }) || (mongoose.Types.ObjectId.isValid(targetId) ? await DischargeRecord.findById(targetId) : null);
+
+      if (dis) {
+        await DischargeRecord.deleteOne({ _id: dis._id });
+        return true;
+      }
+      return false;
+    };
+
+    // 6. Try delete from PharmaInvoice
+    const tryDeletePharma = async (targetId: string) => {
+      const PharmaInvoice = mongoose.model("PharmaInvoice");
+      const queryList: any[] = [];
+      if (mongoose.Types.ObjectId.isValid(targetId)) queryList.push({ _id: targetId });
+      if (idStr) queryList.push({ invoiceNumber: idStr }, { billNumber: idStr });
+      if (invStr) queryList.push({ invoiceNumber: invStr }, { billNumber: invStr });
+
+      const inv = await PharmaInvoice.findOne({
+        $or: queryList,
+        hospital: hospitalMatch
+      }) || (mongoose.Types.ObjectId.isValid(targetId) ? await PharmaInvoice.findById(targetId) : null);
+
+      if (inv) {
+        await PharmaInvoice.deleteOne({ _id: inv._id });
+        return true;
+      }
+      return false;
+    };
+
+    // 7. Try delete from Transaction (primary transactions collection)
+    const tryDeleteTransaction = async (targetId: string) => {
+      const Transaction = mongoose.model("Transaction");
+      const queryList: any[] = [];
+      if (mongoose.Types.ObjectId.isValid(targetId)) queryList.push({ _id: targetId });
+      if (idStr) queryList.push({ receiptNumber: idStr }, { invoiceNumber: idStr }, { transactionId: idStr });
+      if (invStr) queryList.push({ receiptNumber: invStr }, { invoiceNumber: invStr }, { transactionId: invStr });
+
+      const tx = await Transaction.findOne({
+        $or: queryList,
+        hospital: hospitalMatch
+      }) || (mongoose.Types.ObjectId.isValid(targetId) ? await Transaction.findById(targetId) : null);
+
+      if (tx) {
+        await Transaction.deleteOne({ _id: tx._id });
+        return true;
+      }
+      return false;
+    };
+
+    // Type-directed search
+    if (!deleted) {
+      for (const targetId of candidateIds) {
+        if (normType.includes("lab")) {
+          if (await tryDeleteLabOrder(targetId)) { deleted = true; break; }
+        } else if (normType.includes("appointment") || normType.includes("opd") || normType.includes("consultation")) {
+          if (await tryDeleteAppointment(targetId)) { deleted = true; break; }
+        } else if (normType.includes("ipd_advance") || normType.includes("advance") || normType === "ipd" || normType.includes("interim") || normType.includes("ipd_bill_payment")) {
+          if (await tryDeleteIPDAdvance(targetId)) { deleted = true; break; }
+        } else if (normType.includes("discharge") || normType.includes("settlement") || normType.includes("final")) {
+          if (await tryDeleteDischarge(targetId)) { deleted = true; break; }
+        } else if (normType.includes("pharma")) {
+          if (await tryDeletePharma(targetId)) { deleted = true; break; }
+        } else if (normType.includes("package") || normType.includes("transaction")) {
+          if (await tryDeleteTransaction(targetId)) { deleted = true; break; }
+        }
+      }
+    }
+
+    // Fallback across all collections
+    if (!deleted) {
+      for (const targetId of candidateIds) {
+        if (await tryDeleteLabOrder(targetId)) { deleted = true; break; }
+        if (await tryDeleteTransaction(targetId)) { deleted = true; break; }
+        if (await tryDeleteAppointment(targetId)) { deleted = true; break; }
+        if (await tryDeleteIPDAdvance(targetId)) { deleted = true; break; }
+        if (await tryDeleteDischarge(targetId)) { deleted = true; break; }
+        if (await tryDeletePharma(targetId)) { deleted = true; break; }
+      }
+    }
+
+    // Direct check by string ID or invoice number if candidates didn't hit
+    if (!deleted) {
+      const searchKey = idStr || invStr;
+      if (searchKey) {
+        if (await tryDeleteLabOrder(searchKey)) deleted = true;
+        else if (await tryDeleteTransaction(searchKey)) deleted = true;
+        else if (await tryDeleteAppointment(searchKey)) deleted = true;
+        else if (await tryDeleteIPDAdvance(searchKey)) deleted = true;
+        else if (await tryDeleteDischarge(searchKey)) deleted = true;
+        else if (await tryDeletePharma(searchKey)) deleted = true;
+      }
+    }
+
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "Transaction record not found in system" });
+    }
+
+    res.json({ success: true, message: "Transaction deleted successfully" });
+  } catch (err: any) {
+    console.error("deleteTransaction error:", err);
     res.status(500).json({ success: false, message: err?.message || "Internal Server Error" });
   }
 };
