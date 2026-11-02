@@ -2,13 +2,13 @@ name: Backend CI/CD
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "new" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "new" ]
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     strategy:
       matrix:
@@ -25,22 +25,11 @@ jobs:
         
     - name: Install Dependencies
       run: npm ci
+      env:
+        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       
     - name: Type Check & Build
       run: npm run build
       
     - name: Run Tests
       run: npm run test:coverage --if-present
-      
-  # deployment:
-  #   needs: build-and-test
-  #   runs-on: ubuntu-latest
-  #   if: github.ref == 'refs/heads/main'
-  #   steps:
-  #     # Add your deployment steps here (e.g., AWS EC2, Render, Heroku)
-  #     # Example for Render:
-  #     # - name: Trigger Render Deployment
-  #     #   uses: swapsick/render-action@v1
-  #     #   with:
-  #     #     render-token: ${{ secrets.RENDER_API_KEY }}
-  #     #     service-id: ${{ secrets.RENDER_SERVICE_ID }}
