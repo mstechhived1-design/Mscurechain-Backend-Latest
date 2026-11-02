@@ -9,6 +9,7 @@ import {
   getFamilyMembers,
   addFamilyMember,
   switchFamilyMember,
+  updateFamilyMemberRelation,
 } from "../Controllers/patientController.js";
 import {
   getPatientAppointments,
@@ -78,6 +79,11 @@ router.post(
   "/switch-profile/:patientId",
   authorizeRoles("patient"),
   switchFamilyMember,
+);
+router.patch(
+  "/family-members/:id/relation",
+  authorizeRoles("patient"),
+  updateFamilyMemberRelation,
 );
 
 // Patient search and bed info routes (Isolated to hospital)
