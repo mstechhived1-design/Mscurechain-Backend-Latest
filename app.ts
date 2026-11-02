@@ -277,6 +277,9 @@ const isOriginAllowed = (origin?: string): boolean => {
     // Allow all Vercel deployment & preview domains (e.g. dhruva-hospital.vercel.app)
     if (hostname.endsWith(".vercel.app")) return true;
 
+    // Allow Cloudflare Workers & Pages domains
+    if (hostname.endsWith(".workers.dev") || hostname.endsWith(".pages.dev")) return true;
+
     // Allow mscurechain.com and subdomains
     if (hostname === "mscurechain.com" || hostname.endsWith(".mscurechain.com")) return true;
 

@@ -768,3 +768,42 @@ export const switchFamilyMember = async (req: Request, res: Response) => {
   }
 };
 
+
+
+/**
+ * PATCH /api/patients/family-members/:id/relation
+ * Saves blood relationship for a family member directly to MongoDB.
+ */
+export const updateFamilyMemberRelation = async (req: Request, res: Response) => {
+  const patientReq = req as unknown as PatientRequest;
+  try {
+    const currentUserId = patientReq.user?._id;
+    const { id } = req.params;
+    const { relationship } = req.body;
+
+    if (!currentUserId) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+    if (!relationship) {
+      return res.status(400).json({ success: false, message: "Relationship is required" });
+    }
+
+    const targetPatient = await (Patient.findById(id) as any).unscoped();
+    if (!targetPatient) {
+      return res.status(404).json({ success: false, message: "Family member not found" });
+    }
+
+    targetPatient.emergencyContactRelation = relationship;
+    await targetPatient.save();
+
+    return res.json({
+      success: true,
+      message: `Relationship updated to ${relationship}`,
+      memberId: id,
+      relationship,
+    });
+  } catch (err: any) {
+    console.error("[updateFamilyMemberRelation] Error:", err);
+    return res.status(500).json({ success: false, message: "Failed to update relationship in database" });
+  }
+};
