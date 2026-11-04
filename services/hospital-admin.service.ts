@@ -1537,6 +1537,48 @@ export class HospitalAdminService {
                 user: "$patient",
                 hospital: 1,
                 amount: { $ifNull: ["$totalAmount", 0] },
+                subtotal: {
+                  $ifNull: [
+                    "$subtotal",
+                    { $arrayElemAt: ["$transactionLookup.subtotal", 0] },
+                    "$totalAmount"
+                  ]
+                },
+                discount: {
+                  $ifNull: [
+                    "$discountAmount",
+                    { $arrayElemAt: ["$transactionLookup.discountAmount", 0] },
+                    0
+                  ]
+                },
+                discountAmount: {
+                  $ifNull: [
+                    "$discountAmount",
+                    { $arrayElemAt: ["$transactionLookup.discountAmount", 0] },
+                    0
+                  ]
+                },
+                discountReason: {
+                  $ifNull: [
+                    "$discountReason",
+                    { $arrayElemAt: ["$transactionLookup.discountReason", 0] },
+                    ""
+                  ]
+                },
+                totalBillAmount: {
+                  $ifNull: [
+                    "$subtotal",
+                    { $arrayElemAt: ["$transactionLookup.subtotal", 0] },
+                    "$totalAmount"
+                  ]
+                },
+                invoiceNumber: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$transactionLookup.invoiceNumber", 0] },
+                    "$invoiceNumber",
+                    "—"
+                  ]
+                },
                 type: { $literal: "lab_test" },
                 status: { $literal: "completed" }, // Maps all active lab orders to completed for ledger
                 referenceId: "$_id",

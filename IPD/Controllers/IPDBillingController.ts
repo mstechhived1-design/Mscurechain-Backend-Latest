@@ -267,15 +267,39 @@ export const calculateBillBreakdown = async (admissionId: string) => {
         };
       }).filter((t: any) => t && t.testName);
 
-      let unDiscountedAmount = amount;
+      let calcSub = 0;
       if (orderTestsObjects.length > 0) {
-          let calcSub = 0;
           orderTestsObjects.forEach((t: any) => {
               const possiblePrices = [t.cost, t.price, t.amount, t.testPrice, t.test?.price, t.test?.cost, t.test?.amount, t.testId?.price, t.testId?.cost];
               const found = possiblePrices.find(val => val !== undefined && val !== null);
               if (found !== undefined) calcSub += Number(found);
           });
-          if (calcSub > 0) unDiscountedAmount = calcSub;
+      }
+
+      // If order.totalAmount > 0, it represents the actual net bill amount charged to the patient
+      // Only fall back to calcSub if totalAmount is missing or 0
+      const finalLabAmount = (amount > 0) ? amount : (calcSub > 0 ? calcSub : 0);
+      const grossLabAmount = (order.subtotal && order.subtotal > 0) ? Number(order.subtotal) : (calcSub > 0 ? calcSub : finalLabAmount);
+      const orderDiscount = (order.discountAmount && order.discountAmount > 0) ? Number(order.discountAmount) : Math.max(0, grossLabAmount - finalLabAmount);
+
+      // Adjust individual test items so their displayed rates reflect the net discounted amount
+      if (orderTestsObjects.length > 0 && finalLabAmount > 0) {
+          if (orderTestsObjects.length === 1) {
+              orderTestsObjects[0].cost = finalLabAmount;
+              orderTestsObjects[0].price = finalLabAmount;
+              orderTestsObjects[0].amount = finalLabAmount;
+          } else if (grossLabAmount > 0 && grossLabAmount !== finalLabAmount) {
+              const ratio = finalLabAmount / grossLabAmount;
+              orderTestsObjects.forEach((t: any) => {
+                  const possiblePrices = [t.cost, t.price, t.amount, t.testPrice, t.test?.price, t.test?.cost, t.test?.amount, t.testId?.price, t.testId?.cost];
+                  const found = possiblePrices.find(val => val !== undefined && val !== null);
+                  const base = found !== undefined ? Number(found) : (grossLabAmount / orderTestsObjects.length);
+                  const net = Math.round(base * ratio);
+                  t.cost = net;
+                  t.price = net;
+                  t.amount = net;
+              });
+          }
       }
 
       const existingIdx = extraCharges.findIndex(ec => 
@@ -300,14 +324,16 @@ export const calculateBillBreakdown = async (admissionId: string) => {
         extraCharges.splice(existingIdx, 1);
       }
 
-      totalLabCharge += unDiscountedAmount;
+      totalLabCharge += finalLabAmount;
       const testNamesStr = orderTestNames.length > 0 ? orderTestNames.join(", ") : "Lab Tests";
       
       labOrderItems.push({
         _id: order._id,
         description: `${testNamesStr} (${order.sampleId || order._id})`,
         category: "Lab",
-        amount: unDiscountedAmount,
+        amount: finalLabAmount,
+        subtotal: grossLabAmount,
+        discount: orderDiscount,
         date: order.createdAt,
         status: "Active",
         isLabOrder: true,
