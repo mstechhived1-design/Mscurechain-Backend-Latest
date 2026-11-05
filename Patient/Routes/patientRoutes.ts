@@ -2,6 +2,7 @@ import express from "express";
 import {
   getProfile,
   updateProfile,
+  uploadAvatar,
   getPatientProfileById,
   searchPatients,
   getPatientWithBedInfo,
@@ -52,6 +53,12 @@ router.get(
   "/profile/:id",
   authorizeRoles("doctor", "super-admin", "hospital-admin"),
   getPatientProfileById,
+);
+router.post(
+  "/profile/avatar",
+  authorizeRoles("patient", "super-admin", "hospital-admin"),
+  upload.single("image"),
+  uploadAvatar
 );
 router.patch(
   "/profile",
