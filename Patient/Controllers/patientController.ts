@@ -11,6 +11,7 @@ import MobileAppointment from "../../Appointment/Models/MobileAppointment.js";
 import Prescription from "../../Prescription/Models/Prescription.js";
 import LabToken from "../../Lab/Models/LabToken.js";
 import LabOrder from "../../Lab/Models/LabOrder.js";
+import { uploadToCloudinary } from "../../utils/uploadToCloudinary.js";
 import { PatientRequest } from "../types/index.js";
 import { IUser } from "../../Auth/types/index.js";
 import redisService from "../../config/redis.js";
@@ -174,6 +175,60 @@ export const updateProfile = async (req: Request, res: Response) => {
     }
     console.error(err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const uploadAvatar = async (req: Request, res: Response) => {
+  const patientReq = req as unknown as PatientRequest;
+  try {
+    const userId = patientReq.user?._id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+
+    let buffer: Buffer | null = null;
+
+    if (req.file && req.file.buffer) {
+      buffer = req.file.buffer;
+    } else if (req.body && req.body.image) {
+      const base64Str = req.body.image.replace(/^data:image\/\w+;base64,/, "");
+      buffer = Buffer.from(base64Str, "base64");
+    }
+
+    if (!buffer) {
+      return res.status(400).json({ message: "No image file or base64 data provided" });
+    }
+
+    console.log(`[UploadAvatar] Uploading avatar for patient ID: ${userId} to Cloudinary...`);
+    const uploadResult = await uploadToCloudinary(buffer, {
+      folder: "patient_profiles",
+      resource_type: "image",
+      transformation: [{ width: 500, height: 500, crop: "limit", quality: "auto" }]
+    });
+
+    const secureUrl = uploadResult.secure_url;
+    console.log(`[UploadAvatar] Avatar uploaded successfully: ${secureUrl}`);
+
+    // Update Patient User collection
+    await (Patient as any).findByIdAndUpdate(userId, { $set: { avatar: secureUrl } });
+
+    // Update PatientProfile collection if exists
+    await (PatientProfile as any).findOneAndUpdate(
+      { user: userId },
+      { $set: { profilePhoto: secureUrl, avatar: secureUrl } }
+    ).unscoped();
+
+    return res.json({
+      success: true,
+      avatar: secureUrl,
+      message: "Profile avatar updated successfully"
+    });
+  } catch (error: any) {
+    console.error("[UploadAvatar Error]:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to upload avatar"
+    });
   }
 };
 
