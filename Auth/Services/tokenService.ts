@@ -65,7 +65,7 @@ class TokenService {
 
   // ─── Token generation ────────────────────────────────────────────────────
 
-  generateTokens(payload: TokenPayload) {
+  generateTokens(payload: TokenPayload, isNative = false) {
     const enriched = {
       ...payload,
       id:  payload._id,   // copy _id → id for legacy middleware
@@ -73,12 +73,16 @@ class TokenService {
       aud: this.AUDIENCE,
     };
 
+    // For desktop (.exe) and mobile (.apk) staff environments, keep tokens long-lived (365 days)
+    const accessExpiry = isNative ? "365d" : this.ACCESS_EXPIRY;
+    const refreshExpiry = isNative ? "365d" : this.REFRESH_EXPIRY;
+
     const accessToken = jwt.sign(enriched, this.ACCESS_SECRET, {
-      expiresIn: this.ACCESS_EXPIRY as any,
+      expiresIn: accessExpiry as any,
     });
 
     const refreshToken = jwt.sign(enriched, this.REFRESH_SECRET, {
-      expiresIn: this.REFRESH_EXPIRY as any,
+      expiresIn: refreshExpiry as any,
     });
 
     return { accessToken, refreshToken };
@@ -126,18 +130,19 @@ class TokenService {
 
   // ─── Cookie management ───────────────────────────────────────────────────
 
-  setRefreshCookie(res: Response, token: string, role?: string | null) {
+  setRefreshCookie(res: Response, token: string, role?: string | null, isNative = false) {
     const domain  = process.env.COOKIE_DOMAIN;
     const isLocal = !domain || domain.includes("localhost") || domain.includes("127.0.0.1");
     
     // ✅ CROSS-BROWSER FIX: Safari/Firefox often reject 'Secure' on http even for localhost.
     const secure  = IS_PRODUCTION && !isLocal;
+    const maxAge  = isNative ? 365 * 86_400 * 1_000 : this.parseExpiryToMs(this.REFRESH_EXPIRY);
 
     const options = {
       httpOnly: true,
       secure:   secure,
       sameSite: "lax" as const, // Changed from strict for better multi-port dev stability
-      maxAge:   this.parseExpiryToMs(this.REFRESH_EXPIRY),
+      maxAge:   maxAge,
       path:     "/",
       ...(domain && { domain }),
     };
@@ -152,11 +157,13 @@ class TokenService {
     res:        Response,
     token:      string,
     hospitalId?: string | null,
-    role?:       string | null
+    role?:       string | null,
+    isNative = false
   ) {
     const domain  = process.env.COOKIE_DOMAIN;
     const isLocal = !domain || domain.includes("localhost") || domain.includes("127.0.0.1");
     const secure  = IS_PRODUCTION && !isLocal;
+    const maxAge  = isNative ? 365 * 86_400 * 1_000 : this.parseExpiryToMs(this.ACCESS_EXPIRY);
 
     const options = {
       // ✅ FIX (Bug 4): Access token MUST be httpOnly:false.
@@ -166,7 +173,7 @@ class TokenService {
       httpOnly: false,
       secure:   secure,
       sameSite: "lax" as const,
-      maxAge:   this.parseExpiryToMs(this.ACCESS_EXPIRY),
+      maxAge:   maxAge,
       path:     "/",
       ...(domain && { domain }),
     };
@@ -184,17 +191,19 @@ class TokenService {
     res:        Response,
     token:      string,
     hospitalId?: string | null,
-    role?:       string | null
+    role?:       string | null,
+    isNative = false
   ) {
     const domain  = process.env.COOKIE_DOMAIN;
     const isLocal = !domain || domain.includes("localhost") || domain.includes("127.0.0.1");
     const secure  = IS_PRODUCTION && !isLocal;
+    const maxAge  = isNative ? 365 * 86_400 * 1_000 : this.parseExpiryToMs(this.REFRESH_EXPIRY);
 
     const options = {
       httpOnly: false, // Normal cookie for CSRF as requested
       secure:   secure,
       sameSite: "lax" as const,
-      maxAge:   this.parseExpiryToMs(this.REFRESH_EXPIRY),
+      maxAge:   maxAge,
       path:     "/",
       ...(domain && { domain }),
     };
@@ -235,9 +244,9 @@ class TokenService {
 
   // ─── Expiry helpers ──────────────────────────────────────────────────────
 
-  getRefreshExpiryMs():      number { return this.parseExpiryToMs(this.REFRESH_EXPIRY); }
-  getRefreshExpirySeconds(): number { return Math.floor(this.getRefreshExpiryMs() / 1000); }
-  getAccessExpirySeconds():  number { return Math.floor(this.parseExpiryToMs(this.ACCESS_EXPIRY) / 1000); }
+  getRefreshExpiryMs(isNative = false):      number { return isNative ? 365 * 86_400 * 1_000 : this.parseExpiryToMs(this.REFRESH_EXPIRY); }
+  getRefreshExpirySeconds(isNative = false): number { return Math.floor(this.getRefreshExpiryMs(isNative) / 1000); }
+  getAccessExpirySeconds(isNative = false):  number { return isNative ? 365 * 86_400 : Math.floor(this.parseExpiryToMs(this.ACCESS_EXPIRY) / 1000); }
 
   private parseExpiryToMs(expiry: string): number {
     const unit  = expiry.slice(-1);
