@@ -44,17 +44,23 @@ export const handleAuthResponse = async (res: Response, user: any, req: Request,
 
   if (primaryHospital === "global") primaryHospital = null;
 
+  const isNative = Boolean(
+    req.headers['x-client-platform'] === 'desktop' || 
+    req.headers['x-client-platform'] === 'mobile' || 
+    /MSCureChain|Tauri|AndroidBridge|Electron/i.test(req.headers['user-agent'] || '')
+  );
+
   const { accessToken, refreshToken } = tokenService.generateTokens({
     _id: userId,
     role: user.role,
     hospitalId: primaryHospital,
     hospitals: hospitals.filter((h: any) => h).map((h: any) => (h._id || h).toString()),
-  });
+  }, isNative);
 
   const csrfToken = uuidv4();
   const refreshTokenHash = tokenService.hashToken(refreshToken);
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + tokenService.getRefreshExpiryMs());
+  const expiresAt = new Date(now.getTime() + tokenService.getRefreshExpiryMs(isNative));
 
   // 1. Update Database (Refresh Token Array)
   const MAX_TOKENS = parseInt(process.env.MAX_REFRESH_TOKENS_PER_USER || "5", 10);
@@ -94,9 +100,9 @@ export const handleAuthResponse = async (res: Response, user: any, req: Request,
   }
 
   // 3. Cookies
-  tokenService.setRefreshCookie(res, refreshToken, user.role);
-  tokenService.setAccessCookie(res, accessToken, primaryHospital, user.role);
-  tokenService.setCsrfCookie(res, csrfToken, primaryHospital, user.role);
+  tokenService.setRefreshCookie(res, refreshToken, user.role, isNative);
+  tokenService.setAccessCookie(res, accessToken, primaryHospital, user.role, isNative);
+  tokenService.setCsrfCookie(res, csrfToken, primaryHospital, user.role, isNative);
 
   logAudit(`Login Success`, { 
     userId: userId || "unknown", 
@@ -769,15 +775,21 @@ export const refresh = async (req: Request, res: Response) => {
     //   a) Remove the OLD token hash (it's being rotated out)
     //   b) Push the NEW token hash (so the next refresh finds it)
     // Without this the old hash stays, new cookie is set, but next rotate can't find the new hash → 401.
+    const isNative = Boolean(
+      req.headers['x-client-platform'] === 'desktop' || 
+      req.headers['x-client-platform'] === 'mobile' || 
+      /MSCureChain|Tauri|AndroidBridge|Electron/i.test(req.headers['user-agent'] || '')
+    );
+
     const { accessToken, refreshToken } = tokenService.generateTokens({
       _id: userId,
       role: user.role,
       hospitalId: payload.hospitalId,
       hospitals: user.hospitals || (user.hospital ? [user.hospital] : []),
-    });
+    }, isNative);
 
     const newRefreshHash = tokenService.hashToken(refreshToken);
-    const newExpiresAt = new Date(now.getTime() + tokenService.getRefreshExpiryMs());
+    const newExpiresAt = new Date(now.getTime() + tokenService.getRefreshExpiryMs(isNative));
     const MAX_TOKENS = parseInt(process.env.MAX_REFRESH_TOKENS_PER_USER || "5", 10);
 
     // Remove old hash, add new hash
@@ -796,9 +808,9 @@ export const refresh = async (req: Request, res: Response) => {
     const { v4: uuidv4Refresh } = await import("uuid");
     const newCsrfToken = uuidv4Refresh();
 
-    tokenService.setAccessCookie(res, accessToken, payload.hospitalId, user.role);
-    tokenService.setRefreshCookie(res, refreshToken, user.role);
-    tokenService.setCsrfCookie(res, newCsrfToken, payload.hospitalId, user.role);
+    tokenService.setAccessCookie(res, accessToken, payload.hospitalId, user.role, isNative);
+    tokenService.setRefreshCookie(res, refreshToken, user.role, isNative);
+    tokenService.setCsrfCookie(res, newCsrfToken, payload.hospitalId, user.role, isNative);
 
     return res.json({
       accessToken,
@@ -806,8 +818,8 @@ export const refresh = async (req: Request, res: Response) => {
       csrfToken: newCsrfToken,
       // Also nest under tokens for backward-compat with older client code
       tokens: { accessToken, refreshToken, csrfToken: newCsrfToken },
-      accessTokenExpiresIn: tokenService.getAccessExpirySeconds(),
-      refreshTokenExpiresIn: tokenService.getRefreshExpirySeconds()
+      accessTokenExpiresIn: tokenService.getAccessExpirySeconds(isNative),
+      refreshTokenExpiresIn: tokenService.getRefreshExpirySeconds(isNative)
     });
   } catch (err: any) {
     tokenService.clearCookies(res);
