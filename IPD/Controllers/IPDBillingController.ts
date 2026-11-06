@@ -83,8 +83,8 @@ export const calculateBillBreakdown = async (admissionId: string) => {
   let totalBedCharge = 0;
   const bedDetails = occupancies.map((occ, index) => {
     // SECURITY: Use admissionDate for the first occupancy to ensure no gaps from the moment they are admitted
-    let start = new Date(occ.startDate);
-    if (index === 0 && start > admissionStart) {
+    let start = index === 0 ? admissionStart : new Date(occ.startDate);
+    if (index > 0 && start < admissionStart) {
       start = admissionStart;
     }
 
