@@ -79,7 +79,7 @@ export const sanitizeReportData = (reportData: any): any => {
 
 export const saveTransactionReport = async (req: Request, res: Response) => {
   try {
-    const { patientId, reportData, totals, generatedBy, isOPD, admission, admissionId, templateFormat } = req.body;
+    const { patientId, reportData, totals, generatedBy, isOPD, admission, admissionId, templateFormat, date } = req.body;
     const hospitalId = (req as any).hospitalId;
 
     if (!patientId || !reportData || !totals) {
@@ -123,6 +123,7 @@ export const saveTransactionReport = async (req: Request, res: Response) => {
       totals,
       generatedBy: generatedBy || "system",
       isOPD: isOPD !== undefined ? isOPD : undefined,
+      ...(date ? { date: new Date(date) } : {}),
     });
 
     await report.save();
@@ -226,7 +227,7 @@ export const getAllTransactionReports = async (req: Request, res: Response) => {
 export const updateTransactionReport = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { reportData, totals, isOPD, admission, admissionId, templateFormat } = req.body;
+    const { reportData, totals, isOPD, admission, admissionId, templateFormat, date } = req.body;
     
     if (!reportData || !totals) {
       return res.status(400).json({ message: "Missing required fields" });
@@ -240,6 +241,7 @@ export const updateTransactionReport = async (req: Request, res: Response) => {
     if (admission) updateData.admission = admission;
     if (admissionId) updateData.admissionId = admissionId;
     if (templateFormat) updateData.templateFormat = templateFormat;
+    if (date) updateData.date = new Date(date);
 
     const report = await TransactionReport.findByIdAndUpdate(
       id,
