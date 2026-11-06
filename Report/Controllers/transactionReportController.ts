@@ -1,8 +1,12 @@
+import mongoose from "mongoose";
 import { Request, Response } from "express";
 import TransactionReport from "../Models/TransactionReport.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
 import IPDAdmission from "../../IPD/Models/IPDAdmission.js";
 import BedOccupancy from "../../IPD/Models/BedOccupancy.js";
+import IPDExtraCharge from "../../IPD/Models/IPDExtraCharge.js";
+import IPDAdvancePayment from "../../IPD/Models/IPDAdvancePayment.js";
+import LabOrder from "../../Lab/Models/LabOrder.js";
 
 const cleanString = (val: any, fallback: string = ""): string => {
   if (!val) return fallback;
@@ -79,34 +83,127 @@ export const sanitizeReportData = (reportData: any): any => {
   return sanitized;
 };
 
-const syncAdmissionStartDate = async (admissionRef: any, newStartDate: any) => {
-  if (!admissionRef || !newStartDate) return;
+const syncAllDatabaseUnderlyingCharges = async (admissionRef: any, patientId: any, reportData: any) => {
+  if (!reportData) return;
+
   try {
-    const parsedDate = new Date(newStartDate);
-    if (isNaN(parsedDate.getTime())) return;
+    // 1. Sync IPDAdmission & BedOccupancy (Admission & Stay Date)
+    const firstAdmStartDate = reportData.admissions?.[0]?.date;
+    if (firstAdmStartDate && (admissionRef || patientId)) {
+      const parsedDate = new Date(firstAdmStartDate);
+      if (!isNaN(parsedDate.getTime())) {
+        let query: any = {};
+        if (typeof admissionRef === 'string' && admissionRef.startsWith('IPD-')) {
+          query = { admissionId: admissionRef };
+        } else if (admissionRef) {
+          query = { $or: [{ _id: admissionRef }, { admissionId: admissionRef }] };
+        } else if (patientId) {
+          query = { patient: patientId };
+        }
 
-    let query: any = {};
-    if (typeof admissionRef === 'string' && admissionRef.startsWith('IPD-')) {
-      query = { admissionId: admissionRef };
-    } else {
-      query = { $or: [{ _id: admissionRef }, { admissionId: admissionRef }] };
+        const adm: any = await (IPDAdmission.findOne(query) as any)?.unscoped();
+        if (adm) {
+          adm.admissionDate = parsedDate;
+          await adm.save();
+
+          await (BedOccupancy.findOneAndUpdate(
+            { admission: adm._id },
+            { $set: { startDate: parsedDate } },
+            { sort: { startDate: 1 } }
+          ) as any)?.unscoped();
+          console.log(`[SYNC DB] Synced IPDAdmission & BedOccupancy startDate to ${parsedDate.toISOString()}`);
+        }
+      }
     }
 
-    const adm: any = await (IPDAdmission.findOne(query) as any)?.unscoped();
-    if (adm) {
-      adm.admissionDate = parsedDate;
-      await adm.save();
+    // 2. Sync Services / Nursing Charges (IPDExtraCharge)
+    if (Array.isArray(reportData.services)) {
+      for (const s of reportData.services) {
+        if (!s.date) continue;
+        const sDate = new Date(s.date);
+        if (isNaN(sDate.getTime())) continue;
 
-      // Also update the first BedOccupancy start date
-      await (BedOccupancy.findOneAndUpdate(
-        { admission: adm._id },
-        { $set: { startDate: parsedDate } },
-        { sort: { startDate: 1 } }
-      ) as any)?.unscoped();
-      console.log(`[SYNC DEBUG] Synced IPDAdmission ${adm.admissionId} and occupancy startDate to ${parsedDate.toISOString()}`);
+        const updateFields: any = { date: sDate, createdAt: sDate };
+        if (s.rate !== undefined) updateFields.amount = s.amount || (s.rate * (Number(s.quantity) || 1));
+
+        let query: any = null;
+        if (s.id && mongoose.Types.ObjectId.isValid(s.id)) {
+          query = { _id: s.id };
+        } else if (s._id && mongoose.Types.ObjectId.isValid(s._id)) {
+          query = { _id: s._id };
+        } else if (s.serviceName) {
+          query = {
+            description: new RegExp(s.serviceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+          };
+          if (admissionRef) query.admission = admissionRef;
+          else if (patientId) query.patient = patientId;
+        }
+
+        if (query) {
+          await (IPDExtraCharge.updateMany(query, { $set: updateFields }) as any)?.unscoped();
+          console.log(`[SYNC DB] Synced IPDExtraCharge ${s.serviceName} date to ${sDate.toISOString()}`);
+        }
+      }
     }
-  } catch (err) {
-    console.warn("[syncAdmissionStartDate] Non-blocking sync warning:", err);
+
+    // 3. Sync Diagnostics / Lab Tests (LabOrder & IPDExtraCharge)
+    if (Array.isArray(reportData.diags)) {
+      for (const d of reportData.diags) {
+        if (!d.date) continue;
+        const dDate = new Date(d.date);
+        if (isNaN(dDate.getTime())) continue;
+
+        let query: any = null;
+        if (d.id && mongoose.Types.ObjectId.isValid(d.id)) {
+          query = { _id: d.id };
+        } else if (d._id && mongoose.Types.ObjectId.isValid(d._id)) {
+          query = { _id: d._id };
+        } else if (d.testName) {
+          query = {
+            'tests.testName': new RegExp(d.testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
+          };
+          if (admissionRef) query.admission = admissionRef;
+          else if (patientId) query.patient = patientId;
+        }
+
+        if (query) {
+          await (LabOrder.updateMany(query, { $set: { createdAt: dDate, updatedAt: dDate } }) as any)?.unscoped();
+          const extraLabQuery: any = {
+            category: { $in: ['Lab', 'Diagnostics', 'Investigation'] },
+            description: new RegExp((d.testName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
+          };
+          if (admissionRef) extraLabQuery.admission = admissionRef;
+          else if (patientId) extraLabQuery.patient = patientId;
+          await (IPDExtraCharge.updateMany(extraLabQuery, { $set: { date: dDate, createdAt: dDate } }) as any)?.unscoped();
+          console.log(`[SYNC DB] Synced LabOrder & Lab ExtraCharge ${d.testName} date to ${dDate.toISOString()}`);
+        }
+      }
+    }
+
+    // 4. Sync Payments / Receipts (IPDAdvancePayment)
+    if (Array.isArray(reportData.payments)) {
+      for (const p of reportData.payments) {
+        if (!p.date) continue;
+        const pDate = new Date(p.date);
+        if (isNaN(pDate.getTime())) continue;
+
+        let query: any = null;
+        if (p.receiptNumber || p.receiptNo) {
+          query = { receiptNumber: p.receiptNumber || p.receiptNo };
+        } else if (p.id && mongoose.Types.ObjectId.isValid(p.id)) {
+          query = { _id: p.id };
+        } else if (p._id && mongoose.Types.ObjectId.isValid(p._id)) {
+          query = { _id: p._id };
+        }
+
+        if (query) {
+          await (IPDAdvancePayment.updateMany(query, { $set: { date: pDate, createdAt: pDate } }) as any)?.unscoped();
+          console.log(`[SYNC DB] Synced IPDAdvancePayment ${p.receiptNumber} date to ${pDate.toISOString()}`);
+        }
+      }
+    }
+  } catch (syncErr) {
+    console.warn("[syncAllDatabaseUnderlyingCharges] Non-blocking DB sync warning:", syncErr);
   }
 };
 
@@ -162,10 +259,7 @@ export const saveTransactionReport = async (req: Request, res: Response) => {
     await report.save();
     console.log("[SAVE DEBUG] Report saved successfully ID:", report._id);
 
-    const firstAdmStartDate = sanitizedReportData?.admissions?.[0]?.date;
-    if (firstAdmStartDate && (resolvedAdmission || resolvedAdmissionId)) {
-      await syncAdmissionStartDate(resolvedAdmission || resolvedAdmissionId, firstAdmStartDate);
-    }
+    await syncAllDatabaseUnderlyingCharges(resolvedAdmission || resolvedAdmissionId, patientId, sanitizedReportData);
 
     res.status(201).json({ success: true, report });
   } catch (error: any) {
@@ -178,7 +272,9 @@ export const getPatientTransactionReports = async (req: Request, res: Response) 
   try {
     const { patientId } = req.params;
     const hospitalId = (req as any).hospitalId;
-    const reports = await TransactionReport.find({ patient: patientId }).sort({ date: -1 }).lean();
+    const query: any = { patient: patientId };
+    if (hospitalId) query.hospital = hospitalId;
+    const reports = await (TransactionReport.find(query) as any).unscoped().sort({ updatedAt: -1, createdAt: -1, date: -1 }).lean();
     const profile = await (PatientProfile.findOne({
       user: patientId,
       ...(hospitalId ? { hospital: hospitalId } : {})
@@ -292,11 +388,8 @@ export const updateTransactionReport = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "Report not found" });
     }
 
-    const firstAdmStartDate = sanitizedReportData?.admissions?.[0]?.date;
     const targetAdmRef = updateData.admission || updateData.admissionId || report.admission || report.admissionId;
-    if (firstAdmStartDate && targetAdmRef) {
-      await syncAdmissionStartDate(targetAdmRef, firstAdmStartDate);
-    }
+    await syncAllDatabaseUnderlyingCharges(targetAdmRef, report.patient, sanitizedReportData);
 
     res.json({ success: true, report });
   } catch (error: any) {
