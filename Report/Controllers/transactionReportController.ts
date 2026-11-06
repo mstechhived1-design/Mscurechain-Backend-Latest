@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import TransactionReport from "../Models/TransactionReport.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
+import IPDAdmission from "../../IPD/Models/IPDAdmission.js";
+import BedOccupancy from "../../IPD/Models/BedOccupancy.js";
 
 const cleanString = (val: any, fallback: string = ""): string => {
   if (!val) return fallback;
@@ -77,6 +79,37 @@ export const sanitizeReportData = (reportData: any): any => {
   return sanitized;
 };
 
+const syncAdmissionStartDate = async (admissionRef: any, newStartDate: any) => {
+  if (!admissionRef || !newStartDate) return;
+  try {
+    const parsedDate = new Date(newStartDate);
+    if (isNaN(parsedDate.getTime())) return;
+
+    let query: any = {};
+    if (typeof admissionRef === 'string' && admissionRef.startsWith('IPD-')) {
+      query = { admissionId: admissionRef };
+    } else {
+      query = { $or: [{ _id: admissionRef }, { admissionId: admissionRef }] };
+    }
+
+    const adm: any = await (IPDAdmission.findOne(query) as any)?.unscoped();
+    if (adm) {
+      adm.admissionDate = parsedDate;
+      await adm.save();
+
+      // Also update the first BedOccupancy start date
+      await (BedOccupancy.findOneAndUpdate(
+        { admission: adm._id },
+        { $set: { startDate: parsedDate } },
+        { sort: { startDate: 1 } }
+      ) as any)?.unscoped();
+      console.log(`[SYNC DEBUG] Synced IPDAdmission ${adm.admissionId} and occupancy startDate to ${parsedDate.toISOString()}`);
+    }
+  } catch (err) {
+    console.warn("[syncAdmissionStartDate] Non-blocking sync warning:", err);
+  }
+};
+
 export const saveTransactionReport = async (req: Request, res: Response) => {
   try {
     const { patientId, reportData, totals, generatedBy, isOPD, admission, admissionId, templateFormat, date } = req.body;
@@ -128,6 +161,12 @@ export const saveTransactionReport = async (req: Request, res: Response) => {
 
     await report.save();
     console.log("[SAVE DEBUG] Report saved successfully ID:", report._id);
+
+    const firstAdmStartDate = sanitizedReportData?.admissions?.[0]?.date;
+    if (firstAdmStartDate && (resolvedAdmission || resolvedAdmissionId)) {
+      await syncAdmissionStartDate(resolvedAdmission || resolvedAdmissionId, firstAdmStartDate);
+    }
+
     res.status(201).json({ success: true, report });
   } catch (error: any) {
     console.error("Error saving transaction report:", error);
@@ -251,6 +290,12 @@ export const updateTransactionReport = async (req: Request, res: Response) => {
 
     if (!report) {
       return res.status(404).json({ message: "Report not found" });
+    }
+
+    const firstAdmStartDate = sanitizedReportData?.admissions?.[0]?.date;
+    const targetAdmRef = updateData.admission || updateData.admissionId || report.admission || report.admissionId;
+    if (firstAdmStartDate && targetAdmRef) {
+      await syncAdmissionStartDate(targetAdmRef, firstAdmStartDate);
     }
 
     res.json({ success: true, report });
