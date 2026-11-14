@@ -26,6 +26,7 @@ import {
   getHospitalAnalytics,
   getDoctorPerformanceDetailed,
   getDoctorDetailedTransactions,
+  getDoctorPharmaAudit,
   createDoctor,
   createHelpDesk,
   assignDoctorToHospital,
@@ -208,6 +209,20 @@ router.get(
     "masterhelpdesk",
   ),
   getDoctorDetailedTransactions,
+);
+router.get(
+  "/analytics/doctor-performance/:id/pharma-audit",
+  authorizeRoles(
+    "hospital-admin",
+    "super-admin",
+    "admin",
+    "doctor",
+    "hr",
+    "nurse",
+    "helpdesk",
+    "masterhelpdesk",
+  ),
+  getDoctorPharmaAudit,
 );
 
 import upload from "../../middleware/Upload/upload.js";

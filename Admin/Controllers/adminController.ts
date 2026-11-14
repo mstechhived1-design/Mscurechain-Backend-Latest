@@ -1666,6 +1666,34 @@ export const getDoctorDetailedTransactions = async (req: Request, res: Response)
   }
 };
 
+export const getDoctorPharmaAudit = async (req: Request, res: Response) => {
+  try {
+    const hospitalId = await getRequesterHospitalId(req);
+    const { id: doctorId } = req.params;
+    const { range, startDate, endDate, search, patientType } = req.query;
+
+    if (!hospitalId) {
+      return res.status(403).json({ message: "No hospital associated with this account" });
+    }
+
+    const auditData = await hospitalAdminService.getDoctorPharmaAudit(
+      hospitalId,
+      doctorId,
+      range as string,
+      {
+        startDate: startDate as string,
+        endDate: endDate as string,
+        search: search as string,
+        patientType: patientType as string,
+      },
+    );
+    res.json(auditData);
+  } catch (error: any) {
+    console.error("Doctor Pharma Audit Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+
 export const createDoctor = async (req: Request, res: Response) => {
   req.body.role = "doctor";
   return createUser(req, res);
