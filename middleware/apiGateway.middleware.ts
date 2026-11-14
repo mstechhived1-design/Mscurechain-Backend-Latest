@@ -224,6 +224,8 @@ export const corsHandler = (
           hostname.endsWith(".vercel.app") ||
           hostname === "mscurechain.com" ||
           hostname.endsWith(".mscurechain.com") ||
+          hostname === "mscurechain.local" ||
+          hostname.endsWith(".mscurechain.local") ||
           hostname === "railway.app" ||
           hostname.endsWith(".railway.app") ||
           hostname === "localhost" ||
@@ -248,9 +250,10 @@ export const corsHandler = (
       "Access-Control-Allow-Methods",
       "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     );
+    const reqHeaders = req.headers["access-control-request-headers"] as string | undefined;
     res.setHeader(
       "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-CSRF-Token, X-Requested-With, Accept, hospital-id, x-tenant-id, x-hospital-id, Origin",
+      reqHeaders || "Content-Type, Authorization, X-CSRF-Token, x-csrf-token, X-Requested-With, Accept, hospital-id, x-tenant-id, x-hospital-id, x-client-platform, X-Client-Platform, x-session-id, X-Session-Id, Origin",
     );
   }
 

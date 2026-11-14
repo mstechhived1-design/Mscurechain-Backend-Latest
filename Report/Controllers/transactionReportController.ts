@@ -87,37 +87,38 @@ const syncAllDatabaseUnderlyingCharges = async (admissionRef: any, patientId: an
   if (!reportData) return;
 
   try {
+    let admDoc: any = null;
+    if (admissionRef) {
+      if (typeof admissionRef === 'string' && admissionRef.startsWith('IPD-')) {
+        admDoc = await (IPDAdmission.findOne({ admissionId: admissionRef }) as any)?.unscoped();
+      } else if (mongoose.Types.ObjectId.isValid(admissionRef)) {
+        admDoc = await (IPDAdmission.findById(admissionRef) as any)?.unscoped();
+      }
+    }
+    if (!admDoc && patientId) {
+      admDoc = await (IPDAdmission.findOne({ patient: patientId }).sort({ createdAt: -1 }) as any)?.unscoped();
+    }
+
+    const admId = admDoc?._id;
+
     // 1. Sync IPDAdmission & BedOccupancy (Admission & Stay Date)
     const firstAdmStartDate = reportData.admissions?.[0]?.date;
-    if (firstAdmStartDate && (admissionRef || patientId)) {
+    if (firstAdmStartDate && admDoc) {
       const parsedDate = new Date(firstAdmStartDate);
       if (!isNaN(parsedDate.getTime())) {
-        let query: any = {};
-        if (typeof admissionRef === 'string' && admissionRef.startsWith('IPD-')) {
-          query = { admissionId: admissionRef };
-        } else if (admissionRef) {
-          query = { $or: [{ _id: admissionRef }, { admissionId: admissionRef }] };
-        } else if (patientId) {
-          query = { patient: patientId };
-        }
+        admDoc.admissionDate = parsedDate;
+        await admDoc.save();
 
-        const adm: any = await (IPDAdmission.findOne(query) as any)?.unscoped();
-        if (adm) {
-          adm.admissionDate = parsedDate;
-          await adm.save();
-
-          await (BedOccupancy.findOneAndUpdate(
-            { admission: adm._id },
-            { $set: { startDate: parsedDate } },
-            { sort: { startDate: 1 } }
-          ) as any)?.unscoped();
-          console.log(`[SYNC DB] Synced IPDAdmission & BedOccupancy startDate to ${parsedDate.toISOString()}`);
-        }
+        await (BedOccupancy.updateMany(
+          { admission: admId },
+          { $set: { startDate: parsedDate } }
+        ) as any)?.unscoped();
+        console.log(`[SYNC DB] Synced IPDAdmission ${admDoc.admissionId} and BedOccupancy to ${parsedDate.toISOString()}`);
       }
     }
 
     // 2. Sync Services / Nursing Charges (IPDExtraCharge)
-    if (Array.isArray(reportData.services)) {
+    if (Array.isArray(reportData.services) && (admId || patientId)) {
       for (const s of reportData.services) {
         if (!s.date) continue;
         const sDate = new Date(s.date);
@@ -126,57 +127,51 @@ const syncAllDatabaseUnderlyingCharges = async (admissionRef: any, patientId: an
         const updateFields: any = { date: sDate, createdAt: sDate };
         if (s.rate !== undefined) updateFields.amount = s.amount || (s.rate * (Number(s.quantity) || 1));
 
-        let query: any = null;
-        if (s.id && mongoose.Types.ObjectId.isValid(s.id)) {
-          query = { _id: s.id };
-        } else if (s._id && mongoose.Types.ObjectId.isValid(s._id)) {
-          query = { _id: s._id };
-        } else if (s.serviceName) {
-          query = {
-            description: new RegExp(s.serviceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
-          };
-          if (admissionRef) query.admission = admissionRef;
-          else if (patientId) query.patient = patientId;
+        const orConditions: any[] = [];
+        if (admId) orConditions.push({ admission: admId });
+        if (patientId) orConditions.push({ patient: patientId });
+
+        const query: any = {
+          $or: orConditions,
+        };
+        if (s.serviceName) {
+          query.description = new RegExp(s.serviceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
         }
 
-        if (query) {
-          await (IPDExtraCharge.updateMany(query, { $set: updateFields }) as any)?.unscoped();
-          console.log(`[SYNC DB] Synced IPDExtraCharge ${s.serviceName} date to ${sDate.toISOString()}`);
-        }
+        await (IPDExtraCharge.updateMany(query, { $set: updateFields }) as any)?.unscoped();
+        console.log(`[SYNC DB] Synced IPDExtraCharge ${s.serviceName} to ${sDate.toISOString()}`);
       }
     }
 
     // 3. Sync Diagnostics / Lab Tests (LabOrder & IPDExtraCharge)
-    if (Array.isArray(reportData.diags)) {
+    if (Array.isArray(reportData.diags) && (admId || patientId)) {
       for (const d of reportData.diags) {
         if (!d.date) continue;
         const dDate = new Date(d.date);
         if (isNaN(dDate.getTime())) continue;
 
-        let query: any = null;
-        if (d.id && mongoose.Types.ObjectId.isValid(d.id)) {
-          query = { _id: d.id };
-        } else if (d._id && mongoose.Types.ObjectId.isValid(d._id)) {
-          query = { _id: d._id };
-        } else if (d.testName) {
-          query = {
-            'tests.testName': new RegExp(d.testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'),
-          };
-          if (admissionRef) query.admission = admissionRef;
-          else if (patientId) query.patient = patientId;
+        const orConditions: any[] = [];
+        if (admId) orConditions.push({ admission: admId });
+        if (patientId) orConditions.push({ patient: patientId });
+
+        const query: any = {
+          $or: orConditions,
+        };
+        if (d.testName) {
+          query['tests.testName'] = new RegExp(d.testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
         }
 
-        if (query) {
-          await (LabOrder.updateMany(query, { $set: { createdAt: dDate, updatedAt: dDate } }) as any)?.unscoped();
-          const extraLabQuery: any = {
-            category: { $in: ['Lab', 'Diagnostics', 'Investigation'] },
-            description: new RegExp((d.testName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-          };
-          if (admissionRef) extraLabQuery.admission = admissionRef;
-          else if (patientId) extraLabQuery.patient = patientId;
-          await (IPDExtraCharge.updateMany(extraLabQuery, { $set: { date: dDate, createdAt: dDate } }) as any)?.unscoped();
-          console.log(`[SYNC DB] Synced LabOrder & Lab ExtraCharge ${d.testName} date to ${dDate.toISOString()}`);
+        await (LabOrder.updateMany(query, { $set: { createdAt: dDate, updatedAt: dDate } }) as any)?.unscoped();
+
+        const extraLabQuery: any = {
+          $or: orConditions,
+          category: { $in: ['Lab', 'Diagnostics', 'Investigation'] },
+        };
+        if (d.testName) {
+          extraLabQuery.description = new RegExp((d.testName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
         }
+        await (IPDExtraCharge.updateMany(extraLabQuery, { $set: { date: dDate, createdAt: dDate } }) as any)?.unscoped();
+        console.log(`[SYNC DB] Synced LabOrder & Lab ExtraCharge ${d.testName} to ${dDate.toISOString()}`);
       }
     }
 
@@ -187,19 +182,17 @@ const syncAllDatabaseUnderlyingCharges = async (admissionRef: any, patientId: an
         const pDate = new Date(p.date);
         if (isNaN(pDate.getTime())) continue;
 
-        let query: any = null;
+        const query: any = {};
         if (p.receiptNumber || p.receiptNo) {
-          query = { receiptNumber: p.receiptNumber || p.receiptNo };
-        } else if (p.id && mongoose.Types.ObjectId.isValid(p.id)) {
-          query = { _id: p.id };
-        } else if (p._id && mongoose.Types.ObjectId.isValid(p._id)) {
-          query = { _id: p._id };
+          query.receiptNumber = p.receiptNumber || p.receiptNo;
+        } else if (admId) {
+          query.admission = admId;
+        } else if (patientId) {
+          query.patient = patientId;
         }
 
-        if (query) {
-          await (IPDAdvancePayment.updateMany(query, { $set: { date: pDate, createdAt: pDate } }) as any)?.unscoped();
-          console.log(`[SYNC DB] Synced IPDAdvancePayment ${p.receiptNumber} date to ${pDate.toISOString()}`);
-        }
+        await (IPDAdvancePayment.updateMany(query, { $set: { date: pDate, createdAt: pDate } }) as any)?.unscoped();
+        console.log(`[SYNC DB] Synced IPDAdvancePayment ${p.receiptNumber} to ${pDate.toISOString()}`);
       }
     }
   } catch (syncErr) {
@@ -378,11 +371,11 @@ export const updateTransactionReport = async (req: Request, res: Response) => {
     if (templateFormat) updateData.templateFormat = templateFormat;
     if (date) updateData.date = new Date(date);
 
-    const report = await TransactionReport.findByIdAndUpdate(
+    const report = await (TransactionReport.findByIdAndUpdate(
       id,
-      updateData,
+      { $set: updateData },
       { new: true }
-    );
+    ) as any).unscoped();
 
     if (!report) {
       return res.status(404).json({ message: "Report not found" });

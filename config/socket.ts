@@ -50,6 +50,8 @@ export const initSocket = (server: HttpServer) => {
             hostname.endsWith(".vercel.app") ||
             hostname === "mscurechain.com" ||
             hostname.endsWith(".mscurechain.com") ||
+            hostname === "mscurechain.local" ||
+            hostname.endsWith(".mscurechain.local") ||
             hostname === "railway.app" ||
             hostname.endsWith(".railway.app") ||
             hostname === "localhost" ||

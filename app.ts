@@ -256,6 +256,10 @@ const defaultAllowedOrigins = [
   "https://dhruva-hospital.vercel.app",
   "https://www.mscurechain.com",
   "https://mscurechain.com",
+  "https://app.mscurechain.com",
+  "http://app.mscurechain.com",
+  "https://mscurechain.local",
+  "http://mscurechain.local",
   "https://hms-frontend-green.vercel.app",
   ...parseOrigins(process.env.FRONTEND_URL),
   ...parseOrigins(process.env.ALLOWED_ORIGINS),
@@ -267,21 +271,41 @@ console.log("FRONTEND_URL from process.env:", process.env.FRONTEND_URL);
 console.log("Computed Allowed Origins:", allowedOrigins);
 
 const isOriginAllowed = (origin?: string): boolean => {
-  if (!origin) return true;
+  if (!origin || origin === "null" || origin === "undefined") return true;
   if (allowedOrigins.includes(origin)) return true;
 
   try {
+    // Mobile APK & container protocols
+    if (
+      origin.startsWith("file://") ||
+      origin.startsWith("android-asset://") ||
+      origin.startsWith("content://") ||
+      origin.startsWith("capacitor://") ||
+      origin.startsWith("ionic://") ||
+      origin.startsWith("tauri://") ||
+      origin.startsWith("app://")
+    ) {
+      return true;
+    }
+
     const url = new URL(origin);
-    const hostname = url.hostname;
+    const hostname = url.hostname.toLowerCase();
+
+    // Allow all mscurechain.com and mscurechain.local domains & subdomains
+    if (
+      hostname === "mscurechain.com" ||
+      hostname.endsWith(".mscurechain.com") ||
+      hostname === "mscurechain.local" ||
+      hostname.endsWith(".mscurechain.local")
+    ) {
+      return true;
+    }
 
     // Allow all Vercel deployment & preview domains (e.g. dhruva-hospital.vercel.app)
     if (hostname.endsWith(".vercel.app")) return true;
 
     // Allow Cloudflare Workers & Pages domains
     if (hostname.endsWith(".workers.dev") || hostname.endsWith(".pages.dev")) return true;
-
-    // Allow mscurechain.com and subdomains
-    if (hostname === "mscurechain.com" || hostname.endsWith(".mscurechain.com")) return true;
 
     // Allow railway.app domains
     if (hostname === "railway.app" || hostname.endsWith(".railway.app")) return true;
@@ -298,7 +322,9 @@ const isOriginAllowed = (origin?: string): boolean => {
       return true;
     }
   } catch {
-    // Malformed URL, fall through
+    if (origin.includes("mscurechain") || origin.includes("localhost")) {
+      return true;
+    }
   }
 
   return false;
@@ -310,24 +336,37 @@ app.use(
     const path = req.originalUrl || req.url || "";
     const isPublicRoute = path.startsWith("/api/public") || path.includes("/public/");
 
-    // Public API endpoints (like doctor lists, appointment booking, blogs) allow any origin
+    const requestedHeaders = req.header("Access-Control-Request-Headers");
+    const baseHeaders = [
+      "Content-Type",
+      "Authorization",
+      "X-CSRF-Token",
+      "x-csrf-token",
+      "X-Requested-With",
+      "Accept",
+      "hospital-id",
+      "x-tenant-id",
+      "x-hospital-id",
+      "x-client-platform",
+      "X-Client-Platform",
+      "x-session-id",
+      "X-Session-Id",
+      "x-device-id",
+      "x-app-version",
+      "Origin",
+    ];
+
+    const mergedHeaders = requestedHeaders
+      ? Array.from(new Set([...baseHeaders, ...requestedHeaders.split(",").map((h) => h.trim())]))
+      : baseHeaders;
+
     if (isPublicRoute || isOriginAllowed(origin)) {
       callback(null, {
         origin: origin || true,
         credentials: true,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: [
-          "Content-Type",
-          "Authorization",
-          "X-CSRF-Token",
-          "X-Requested-With",
-          "Accept",
-          "hospital-id",
-          "x-tenant-id",
-          "x-hospital-id",
-          "Origin",
-        ],
-        exposedHeaders: ["Content-Range", "X-Content-Range"],
+        allowedHeaders: mergedHeaders,
+        exposedHeaders: ["Content-Range", "X-Content-Range", "X-Session-Id", "X-CSRF-Token"],
       });
     } else {
       console.warn(`[CORS] Blocked origin: ${origin} for path: ${path}`);
@@ -335,6 +374,26 @@ app.use(
     }
   }),
 );
+
+// Explicit OPTIONS preflight handler for all routes
+app.options("*", (req: Request, res: Response) => {
+  const origin = req.header("Origin");
+  if (isOriginAllowed(origin)) {
+    res.header("Access-Control-Allow-Origin", origin || "*");
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.header(
+      "Access-Control-Allow-Headers",
+      req.header("Access-Control-Request-Headers") ||
+        "Content-Type, Authorization, X-CSRF-Token, x-csrf-token, X-Requested-With, Accept, hospital-id, x-tenant-id, x-hospital-id, x-client-platform, X-Client-Platform, x-session-id, X-Session-Id, Origin"
+    );
+    res.header("Access-Control-Max-Age", "86400");
+    res.sendStatus(204);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
