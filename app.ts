@@ -375,23 +375,25 @@ app.use(
   }),
 );
 
-// Explicit OPTIONS preflight handler for all routes
-app.options("*", (req: Request, res: Response) => {
-  const origin = req.header("Origin");
-  if (isOriginAllowed(origin)) {
-    res.header("Access-Control-Allow-Origin", origin || "*");
-    res.header("Access-Control-Allow-Credentials", "true");
-    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.header(
-      "Access-Control-Allow-Headers",
-      req.header("Access-Control-Request-Headers") ||
-        "Content-Type, Authorization, X-CSRF-Token, x-csrf-token, X-Requested-With, Accept, hospital-id, x-tenant-id, x-hospital-id, x-client-platform, X-Client-Platform, x-session-id, X-Session-Id, Origin"
-    );
-    res.header("Access-Control-Max-Age", "86400");
-    res.sendStatus(204);
-  } else {
-    res.sendStatus(403);
+// Explicit OPTIONS preflight handler for all routes (Express 5 / path-to-regexp compatible)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method === "OPTIONS") {
+    const origin = req.header("Origin");
+    if (isOriginAllowed(origin)) {
+      res.header("Access-Control-Allow-Origin", origin || "*");
+      res.header("Access-Control-Allow-Credentials", "true");
+      res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+      res.header(
+        "Access-Control-Allow-Headers",
+        req.header("Access-Control-Request-Headers") ||
+          "Content-Type, Authorization, X-CSRF-Token, x-csrf-token, X-Requested-With, Accept, hospital-id, x-tenant-id, x-hospital-id, x-client-platform, X-Client-Platform, x-session-id, X-Session-Id, Origin"
+      );
+      res.header("Access-Control-Max-Age", "86400");
+      return res.sendStatus(204);
+    }
+    return res.sendStatus(403);
   }
+  next();
 });
 
 app.use(express.json({ limit: "50mb" }));
