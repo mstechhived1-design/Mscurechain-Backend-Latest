@@ -20,11 +20,15 @@ export interface IInvoiceItem {
 
 export interface IPharmaInvoice extends Document {
   invoiceNo: string;
+  patient?: mongoose.Types.ObjectId;
   patientName: string;
   honorific?: string;
   patientAddress?: string;
   mrn?: string;
   patientType?: string;
+  isIPD?: boolean;
+  admission?: mongoose.Types.ObjectId;
+  admissionId?: string;
   admissionDate?: Date;
   dischargeDate?: Date;
   roomNo?: string;
@@ -85,7 +89,7 @@ const invoiceItemSchema = new Schema<IInvoiceItem>({
     default: "PERCENTAGE",
   },
   discountValue: { type: Number, default: 0 },
-  gstPct: { type: Number, required: true },
+  gstPct: { type: Number, default: 0 },
   hsnCode: { type: String, trim: true },
   amount: { type: Number, required: true },
   returnedQty: { type: Number, default: 0 },
@@ -94,6 +98,10 @@ const invoiceItemSchema = new Schema<IInvoiceItem>({
 const invoiceSchema = new Schema<IPharmaInvoice>(
   {
     invoiceNo: { type: String }, // Scoped uniqueness handled by compound index below
+    patient: { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
+    admission: { type: mongoose.Schema.Types.ObjectId, ref: "IPDAdmission" },
+    admissionId: { type: String, trim: true },
+    isIPD: { type: Boolean, default: false },
     patientName: { type: String, required: true, trim: true },
     honorific: { type: String, trim: true },
     patientAddress: { type: String, trim: true },
@@ -147,7 +155,7 @@ const invoiceSchema = new Schema<IPharmaInvoice>(
       default: "PAID",
     },
     printed: { type: Boolean, default: false },
-    createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    createdBy: { type: Schema.Types.ObjectId, ref: "User" },
     hospital: {
       type: Schema.Types.ObjectId,
       ref: "Hospital",

@@ -28,6 +28,8 @@ import {
   deleteInvoice,
   returnInvoiceItems,
   updateInvoicePatient,
+  checkTransferEligibility,
+  transferInvoiceType,
 } from "../Controllers/invoiceController.js";
 import {
   getSuppliers,
@@ -343,6 +345,8 @@ router.get("/invoices/:id", getInvoiceById);
 router.post("/invoices", createInvoice);
 router.put("/invoices/:id/patient", updateInvoicePatient);
 router.put("/invoices/:id", updateInvoicePatient);
+router.get("/invoices/:id/check-transfer", checkTransferEligibility);
+router.post("/invoices/:id/transfer-type", transferInvoiceType);
 router.post("/invoices/:id/return", returnInvoiceItems);
 router.delete("/invoices/:id", deleteInvoice);
 

@@ -24,7 +24,9 @@ export interface IIPDMedicineIssuance extends Document {
     receivedByNurse?: mongoose.Types.ObjectId;  // nurse who received medicines
     nurseNote?: string;                          // nurse name string (denormalized)
     items: IIssuanceItem[];
-    status: "ISSUED" | "RETURN_REQUESTED" | "RETURN_APPROVED" | "CLOSED";
+    status: "ISSUED" | "RETURN_REQUESTED" | "RETURN_APPROVED" | "CLOSED" | "TRANSFERRED_TO_OPD";
+    isTransferredToOPD?: boolean;
+    transferredAt?: Date;
     totalAmount: number;
     invoiceNo?: string;
     notes?: string;
@@ -71,9 +73,11 @@ const ipdMedicineIssuanceSchema = new Schema<IIPDMedicineIssuance>(
         items: [issuanceItemSchema],
         status: {
             type: String,
-            enum: ["ISSUED", "RETURN_REQUESTED", "RETURN_APPROVED", "CLOSED"],
+            enum: ["ISSUED", "RETURN_REQUESTED", "RETURN_APPROVED", "CLOSED", "TRANSFERRED_TO_OPD"],
             default: "ISSUED",
         },
+        isTransferredToOPD: { type: Boolean, default: false },
+        transferredAt: { type: Date },
         totalAmount: { type: Number, required: true },
         invoiceNo: { type: String, unique: true, sparse: true },
         notes: { type: String },

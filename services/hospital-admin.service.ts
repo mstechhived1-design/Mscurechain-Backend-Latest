@@ -3097,6 +3097,7 @@ export class HospitalAdminService {
         status: {
           $in: ["ISSUED", "RETURN_REQUESTED", "RETURN_APPROVED", "CLOSED"],
         },
+        isTransferredToOPD: { $ne: true },
       }) as any).unscoped();
     }
 
@@ -3140,6 +3141,7 @@ export class HospitalAdminService {
             status: {
               $in: ["ISSUED", "RETURN_REQUESTED", "RETURN_APPROVED", "CLOSED"],
             },
+            isTransferredToOPD: { $ne: true },
           },
         },
         { $group: { _id: null, total: { $sum: "$totalAmount" } } },
@@ -3876,11 +3878,19 @@ export class HospitalAdminService {
       startDate.setDate(endDate.getDate() - 30);
     } else if (range === "90d") {
       startDate.setDate(endDate.getDate() - 90);
-    } else if (range === "custom" && filters?.startDate && filters?.endDate) {
-      startDate = new Date(filters.startDate);
-      endDate = new Date(filters.endDate);
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setHours(23, 59, 59, 999);
+    } else if (filters?.startDate || filters?.endDate) {
+      if (filters.startDate) {
+        startDate = new Date(filters.startDate);
+        startDate.setHours(0, 0, 0, 0);
+      } else {
+        startDate = new Date("2020-01-01");
+      }
+      if (filters.endDate) {
+        endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+      } else {
+        endDate.setHours(23, 59, 59, 999);
+      }
     } else {
       startDate.setDate(endDate.getDate() - 30);
     }
@@ -3890,7 +3900,7 @@ export class HospitalAdminService {
 
     // 1. Get all doctors for this hospital
     const doctors = await DoctorProfile.find({ hospital: hospitalFilter })
-      .populate("user", "name")
+      .populate("user")
       .lean();
 
     const results = await Promise.all(
@@ -3975,110 +3985,46 @@ export class HospitalAdminService {
           }
         });
 
-        // --- C. Pharmacy Revenue (from PharmaInvoices & Doctor Prescriptions) ---
-        const nameRegex = new RegExp(`^${docName.replace(/Dr\\.?\\s*/i, "")}`, "i");
-        
-        // Find orders prescribed by this doctor
-        const docOrders = await PharmacyOrder.find({
-          hospital: hospitalFilter,
-          doctor: docProfileId,
-          createdAt: { $gte: startDate, $lte: endDate }
-        }).select("_id invoiceId prescription patient medicines paymentStatus status").lean();
-
-        const linkedInvoiceIds = docOrders
-          .map((o: any) => o.invoiceId)
-          .filter((id: any) => id && mongoose.Types.ObjectId.isValid(id));
-
-        const invoiceMatchConditions: any[] = [{ doctorName: { $regex: nameRegex } }];
-        if (linkedInvoiceIds.length > 0) {
-          invoiceMatchConditions.push({ _id: { $in: linkedInvoiceIds } });
-        }
-
-        const pharmaInvoices = await PharmaInvoice.find({
-          hospital: hospitalFilter,
-          createdAt: { $gte: startDate, $lte: endDate },
-          status: { $ne: "RETURN" },
-          $or: invoiceMatchConditions
-        }).populate("items.drug", "brand generic form strength unitCost mrp")
-          .populate("items.batch", "batchNo unitCost expiry")
-          .lean();
-
-        let sellingAmount = 0;
-        let purchasingAmount = 0;
-        let costMissingCount = 0;
-        let totalItemsCount = 0;
+        // --- C. Pharmacy Revenue (consistent with Pharma Revenue Audit) ---
+        const audit = await this.getDoctorPharmaAudit(
+          hospitalId,
+          docProfileId.toString(),
+          range,
+          filters
+        );
 
         const pharmacy = {
-          revenue: 0,
-          count: pharmaInvoices.length,
+          revenue: audit.summary?.totalSelling || 0,
+          count: audit.summary?.totalPrescriptions || 0,
           cash: 0,
           upi: 0,
           card: 0,
           due: 0,
-          sellingAmount: 0,
-          purchasingAmount: 0,
-          profit: 0,
-          profitMargin: 0,
-          costMissingCount: 0,
-          prescriptionsCount: pharmaInvoices.length,
-          medicinesCount: 0
+          sellingAmount: audit.summary?.totalSelling || 0,
+          purchasingAmount: audit.summary?.totalPurchasing || 0,
+          profit: audit.summary?.netProfit || 0,
+          profitMargin: audit.summary?.profitMargin || 0,
+          costMissingCount: audit.summary?.costMissingCount || 0,
+          prescriptionsCount: audit.summary?.totalPrescriptions || 0,
+          medicinesCount: audit.summary?.totalMedicines || 0
         };
 
-        pharmaInvoices.forEach((inv: any) => {
-          const amt = inv.netPayable || 0;
-          pharmacy.revenue += amt;
-          if (inv.status === "PENDING" || inv.status === "Pending") {
-            pharmacy.due += amt;
-          } else {
-            if (inv.paymentDetails) {
-              pharmacy.cash += inv.paymentDetails.cash || 0;
-              pharmacy.upi += inv.paymentDetails.upi || 0;
-              pharmacy.card += inv.paymentDetails.card || 0;
+        if (Array.isArray(audit.prescriptions)) {
+          audit.prescriptions.forEach((rx: any) => {
+            const amt = Number(rx.sellingPrice || rx.amount || 0);
+            const mode = (rx.paymentMode || rx.mode || "CASH").toLowerCase();
+            const status = (rx.paymentStatus || rx.status || "PAID").toUpperCase();
+            if (status === "PENDING" || status === "DUE") {
+              pharmacy.due += amt;
+            } else if (mode.includes("upi")) {
+              pharmacy.upi += amt;
+            } else if (mode.includes("card")) {
+              pharmacy.card += amt;
             } else {
-              const method = (inv.paymentMethod || inv.mode || "CASH").toLowerCase();
-              if (method === "cash") pharmacy.cash += amt;
-              else if (method === "upi") pharmacy.upi += amt;
-              else if (method === "card") pharmacy.card += amt;
-              else pharmacy.cash += amt;
+              pharmacy.cash += amt;
             }
-          }
-
-          // Itemized financial calculations
-          if (Array.isArray(inv.items)) {
-            inv.items.forEach((item: any) => {
-              const effQty = Math.max(0, (item.qty || 0) - (item.returnedQty || 0));
-              if (effQty <= 0) return;
-
-              totalItemsCount += effQty;
-              const itemSelling = item.amount != null ? Number(item.amount) : (Number(item.unitRate || item.mrp || 0) * effQty);
-
-              let itemUnitCost = 0;
-              if (item.batch && typeof item.batch === "object" && item.batch.unitCost > 0) {
-                itemUnitCost = Number(item.batch.unitCost);
-              } else if (item.drug && typeof item.drug === "object" && item.drug.unitCost > 0) {
-                itemUnitCost = Number(item.drug.unitCost);
-              }
-
-              if (itemUnitCost > 0) {
-                const itemPurchase = itemUnitCost * effQty;
-                purchasingAmount += itemPurchase;
-                sellingAmount += itemSelling;
-              } else {
-                costMissingCount += effQty;
-                sellingAmount += itemSelling;
-              }
-            });
-          }
-        });
-
-        pharmacy.sellingAmount = Math.round(sellingAmount);
-        pharmacy.purchasingAmount = Math.round(purchasingAmount);
-        pharmacy.profit = Math.max(0, Math.round(sellingAmount - purchasingAmount));
-        pharmacy.profitMargin = sellingAmount > 0
-          ? Math.round(((pharmacy.profit / sellingAmount) * 100) * 10) / 10
-          : 0;
-        pharmacy.costMissingCount = costMissingCount;
-        pharmacy.medicinesCount = totalItemsCount;
+          });
+        }
 
         // --- D. IPD Revenue ---
         const ipdAdmissions = await IPDAdmission.aggregate([
@@ -4162,11 +4108,19 @@ export class HospitalAdminService {
       startDate.setDate(endDate.getDate() - 30);
     } else if (range === "90d") {
       startDate.setDate(endDate.getDate() - 90);
-    } else if (range === "custom" && filters?.startDate && filters?.endDate) {
-      startDate = new Date(filters.startDate);
-      endDate = new Date(filters.endDate);
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setHours(23, 59, 59, 999);
+    } else if (filters?.startDate || filters?.endDate) {
+      if (filters.startDate) {
+        startDate = new Date(filters.startDate);
+        startDate.setHours(0, 0, 0, 0);
+      } else {
+        startDate = new Date("2020-01-01");
+      }
+      if (filters.endDate) {
+        endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+      } else {
+        endDate.setHours(23, 59, 59, 999);
+      }
     } else {
       startDate.setDate(endDate.getDate() - 30);
     }
@@ -4348,6 +4302,19 @@ export class HospitalAdminService {
     return transactions;
   }
 
+  private calculatePatientAge(dob: any): string | number {
+  if (!dob) return "";
+  try {
+    const birthDate = new Date(dob);
+    const diff = Date.now() - birthDate.getTime();
+    const ageDate = new Date(diff);
+    const calculated = Math.abs(ageDate.getUTCFullYear() - 1970);
+    return isNaN(calculated) ? "" : calculated;
+  } catch {
+    return "";
+  }
+}
+
   async getDoctorPharmaAudit(
     hospitalId: string,
     doctorId: string,
@@ -4363,11 +4330,19 @@ export class HospitalAdminService {
       startDate.setDate(endDate.getDate() - 30);
     } else if (range === "90d") {
       startDate.setDate(endDate.getDate() - 90);
-    } else if (range === "custom" && filters?.startDate && filters?.endDate) {
-      startDate = new Date(filters.startDate);
-      endDate = new Date(filters.endDate);
-      startDate.setHours(0, 0, 0, 0);
-      endDate.setHours(23, 59, 59, 999);
+    } else if (filters?.startDate || filters?.endDate) {
+      if (filters.startDate) {
+        startDate = new Date(filters.startDate);
+        startDate.setHours(0, 0, 0, 0);
+      } else {
+        startDate = new Date("2020-01-01");
+      }
+      if (filters.endDate) {
+        endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+      } else {
+        endDate.setHours(23, 59, 59, 999);
+      }
     } else {
       startDate.setDate(endDate.getDate() - 30);
     }
@@ -4378,66 +4353,245 @@ export class HospitalAdminService {
     let docProfile: any = null;
     let docName = "All Doctors";
     let docDept = "All Departments";
+    let docPhone = "";
 
-    const orderQuery: any = {
-      hospital: hospitalFilter,
-      createdAt: { $gte: startDate, $lte: endDate }
-    };
-
-    const invoiceMatchConditions: any[] = [];
+    let invoices: any[] = [];
+    let rawIssuances: any[] = [];
+    const orderMapByInvoiceId = new Map<string, any>();
+    const orderMapByAdmissionId = new Map<string, any>();
+    const orderMapByPatient = new Map<string, any>();
 
     if (!isAll) {
       docProfile = await DoctorProfile.findOne({ _id: doctorId, hospital: hospitalFilter }).populate("user");
-      if (docProfile) {
-        docName = (docProfile.user as any)?.name || "Unknown";
-        docDept = (docProfile as any).department || (docProfile as any).specialization || "General";
-        orderQuery.doctor = docProfile._id;
-        const nameRegex = new RegExp(`^${docName.replace(/Dr\\.?\\s*/i, "")}`, "i");
-        invoiceMatchConditions.push({ doctorName: { $regex: nameRegex } });
+      if (!docProfile || !docProfile.user) {
+        return {
+          doctor: { id: doctorId, name: "Unknown", department: "Unknown", phone: "" },
+          summary: { totalSelling: 0, totalPurchasing: 0, netProfit: 0, profitMargin: 0, totalPrescriptions: 0, totalMedicines: 0, costMissingCount: 0 },
+          prescriptions: []
+        };
       }
+
+      const docUser = docProfile.user as any;
+      docName = docUser?.name || "Unknown";
+      docDept = (docProfile as any).department || (docProfile as any).specialization || (docProfile as any).specialties?.[0] || "General";
+      docPhone = (docUser?.mobile || docUser?.phone || "").trim();
+      const cleanDocName = docName.replace(/^Dr\.?\s*/i, "").trim().toLowerCase();
+      const docProfileId = docProfile._id.toString();
+
+      // Strict validation: Doctor registered mobile/phone must exist
+      if (!docPhone) {
+        return {
+          doctor: { id: doctorId, name: docName, department: docDept, phone: "" },
+          summary: { totalSelling: 0, totalPurchasing: 0, netProfit: 0, profitMargin: 0, totalPrescriptions: 0, totalMedicines: 0, costMissingCount: 0 },
+          prescriptions: []
+        };
+      }
+
+      // 1. Fetch all orders prescribed by this Doctor ID (no date restriction on prescription creation)
+      const orders = await PharmacyOrder.find({
+        hospital: hospitalFilter,
+        doctor: docProfile._id
+      })
+        .populate("patient", "name honorific mrn mobile gender age")
+        .populate({ path: "doctor", populate: { path: "user", select: "name mobile" } })
+        .populate("prescription")
+        .populate("admission", "admissionId")
+        .lean();
+
+      const validInvoiceIds: any[] = [];
+      const ipdAdmissionIds: any[] = [];
+
+      orders.forEach((o: any) => {
+        // Strict Check 1: Doctor Profile & ID must match
+        const orderDocId = (o.doctor?._id || o.doctor)?.toString();
+        if (orderDocId !== docProfileId) return;
+
+        // Strict Check 2: Doctor user name must match
+        const orderDocName = (o.doctor?.user?.name || docName).replace(/^Dr\.?\s*/i, "").trim().toLowerCase();
+        if (!orderDocName.includes(cleanDocName) && !cleanDocName.includes(orderDocName)) return;
+
+        // Strict Check 3: Doctor phone must exist
+        const orderDocMobile = (o.doctor?.user?.mobile || docPhone).trim();
+        if (!orderDocMobile) return;
+
+        if (o.invoiceId) {
+          orderMapByInvoiceId.set(o.invoiceId.toString(), o);
+          validInvoiceIds.push(o.invoiceId);
+        }
+        if (o.admission) {
+          const admId = (o.admission._id || o.admission).toString();
+          orderMapByAdmissionId.set(admId, o);
+          ipdAdmissionIds.push(o.admission._id || o.admission);
+        }
+        if (o.patient?._id) orderMapByPatient.set(o.patient._id.toString(), o);
+      });
+
+      if (validInvoiceIds.length === 0 && ipdAdmissionIds.length === 0) {
+        return {
+          doctor: { id: doctorId, name: docName, department: docDept, phone: docPhone },
+          summary: { totalSelling: 0, totalPurchasing: 0, netProfit: 0, profitMargin: 0, totalPrescriptions: 0, totalMedicines: 0, costMissingCount: 0 },
+          prescriptions: []
+        };
+      }
+
+      // 2. Fetch settled invoices strictly within the Bill / Settlement Date range
+      const rawInvoices = validInvoiceIds.length > 0 ? await PharmaInvoice.find({
+        hospital: hospitalFilter,
+        _id: { $in: validInvoiceIds },
+        createdAt: { $gte: startDate, $lte: endDate },
+        status: { $ne: "RETURN" },
+      })
+        .populate("items.drug", "brand generic form strength unitCost mrp unitsPerPack expiryDate")
+        .populate("items.batch", "batchNo unitCost expiry")
+        .sort({ createdAt: -1 })
+        .lean() : [];
+
+      // Strict Check 4: Doctor Name on Invoice must match doctor's registered name
+      invoices = rawInvoices.filter((inv: any) => {
+        const invDoc = (inv.doctorName || "").replace(/^Dr\.?\s*/i, "").trim().toLowerCase();
+        return !invDoc || invDoc.includes(cleanDocName) || cleanDocName.includes(invDoc);
+      });
+
+      // 3. Fetch IPD medicine issuances strictly within the Date range
+      rawIssuances = ipdAdmissionIds.length > 0 ? await IPDMedicineIssuance.find({
+        hospital: hospitalFilter,
+        admission: { $in: ipdAdmissionIds },
+        createdAt: { $gte: startDate, $lte: endDate },
+        status: { $ne: "CLOSED" },
+        isTransferredToOPD: { $ne: true },
+      })
+        .populate("items.product", "brand generic form strength unitCost mrp unitsPerPack expiryDate")
+        .populate("items.batch", "batchNo unitCost expiry")
+        .populate("patient", "name honorific mrn mobile gender age")
+        .sort({ createdAt: -1 })
+        .lean() : [];
+
     } else {
-      invoiceMatchConditions.push({ doctorName: { $exists: true, $nin: ["", null, "Self", "Walk-in"] } });
+      // isAll === true
+      const rawInvoices = await PharmaInvoice.find({
+        hospital: hospitalFilter,
+        createdAt: { $gte: startDate, $lte: endDate },
+        status: { $ne: "RETURN" },
+        doctorName: { $exists: true, $nin: ["", null, "Self", "Walk-in"] }
+      })
+        .populate("items.drug", "brand generic form strength unitCost mrp unitsPerPack expiryDate")
+        .populate("items.batch", "batchNo unitCost expiry")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const invIds = rawInvoices.map((inv: any) => inv._id);
+
+      const rawAllIssuances = await IPDMedicineIssuance.find({
+        hospital: hospitalFilter,
+        createdAt: { $gte: startDate, $lte: endDate },
+        status: { $ne: "CLOSED" },
+        isTransferredToOPD: { $ne: true },
+      })
+        .populate("items.product", "brand generic form strength unitCost mrp unitsPerPack expiryDate")
+        .populate("items.batch", "batchNo unitCost expiry")
+        .populate("patient", "name honorific mrn mobile gender age")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const issuanceAdmissionIds = rawAllIssuances.map((iss: any) => iss.admission).filter(Boolean);
+
+      const orders = await PharmacyOrder.find({
+        hospital: hospitalFilter,
+        $or: [
+          { invoiceId: { $in: invIds } },
+          ...(issuanceAdmissionIds.length > 0 ? [{ admission: { $in: issuanceAdmissionIds } }] : [])
+        ]
+      })
+        .populate("patient", "name honorific mrn mobile gender age")
+        .populate({ path: "doctor", populate: { path: "user", select: "name mobile" } })
+        .populate("prescription")
+        .populate("admission", "admissionId")
+        .lean();
+
+      orders.forEach((o: any) => {
+        if (o.invoiceId) orderMapByInvoiceId.set(o.invoiceId.toString(), o);
+        if (o.admission) {
+          const admId = (o.admission._id || o.admission).toString();
+          orderMapByAdmissionId.set(admId, o);
+        }
+        if (o.patient?._id) orderMapByPatient.set(o.patient._id.toString(), o);
+      });
+
+      // Strict validation: must have valid doctor profile, doctor id, doctor name, and doctor phone
+      invoices = rawInvoices.filter((inv: any) => {
+        const linkedOrder = orderMapByInvoiceId.get(inv._id.toString());
+        if (!linkedOrder || !linkedOrder.doctor) return false;
+        const dObj = linkedOrder.doctor;
+        if (!dObj._id) return false;
+        const dUser = dObj.user;
+        if (!dUser || !dUser.mobile) return false;
+        const dName = (dUser.name || "").replace(/^Dr\.?\s*/i, "").trim().toLowerCase();
+        const invDoc = (inv.doctorName || "").replace(/^Dr\.?\s*/i, "").trim().toLowerCase();
+        if (invDoc && !invDoc.includes(dName) && !dName.includes(invDoc)) return false;
+        return true;
+      });
+
+      rawIssuances = rawAllIssuances.filter((iss: any) => {
+        const admId = (iss.admission?._id || iss.admission)?.toString();
+        const linkedOrder = admId ? orderMapByAdmissionId.get(admId) : null;
+        if (!linkedOrder || !linkedOrder.doctor) return false;
+        const dObj = linkedOrder.doctor;
+        if (!dObj._id) return false;
+        const dUser = dObj.user;
+        if (!dUser || !dUser.mobile) return false;
+        return true;
+      });
     }
 
-    // 1. Fetch Pharmacy Orders in date range
-    const orders = await PharmacyOrder.find(orderQuery)
-      .populate("patient", "name honorific mrn mobile gender age")
-      .populate({ path: "doctor", populate: { path: "user", select: "name" } })
-      .populate("prescription")
-      .populate("admission", "admissionId")
-      .lean();
+    // Collect missing patient phones and user IDs to enrich MRN, age, and gender
+    const patientPhones = new Set<string>();
+    const patientUserIds = new Set<string>();
 
-    const orderInvoiceIds = orders
-      .map((o: any) => o.invoiceId)
-      .filter((id: any) => id && mongoose.Types.ObjectId.isValid(id));
-
-    if (orderInvoiceIds.length > 0) {
-      invoiceMatchConditions.push({ _id: { $in: orderInvoiceIds } });
+    for (const inv of invoices) {
+      if (inv.customerPhone) patientPhones.add(inv.customerPhone.trim());
+      if ((inv as any).customerMobile) patientPhones.add((inv as any).customerMobile.trim());
+    }
+    for (const iss of rawIssuances) {
+      if (iss.patient?._id) patientUserIds.add(iss.patient._id.toString());
+      if (iss.patient?.mobile) patientPhones.add(iss.patient.mobile.trim());
     }
 
-    const invoiceQuery: any = {
-      hospital: hospitalFilter,
-      createdAt: { $gte: startDate, $lte: endDate },
-      status: { $ne: "RETURN" },
-    };
+    const patientMapByPhone = new Map<string, any>();
+    const patientMapById = new Map<string, any>();
+    const profileMapByPhone = new Map<string, any>();
+    const profileMapByUser = new Map<string, any>();
 
-    if (invoiceMatchConditions.length > 0) {
-      invoiceQuery.$or = invoiceMatchConditions;
+    if (patientPhones.size > 0 || patientUserIds.size > 0) {
+      const phoneArr = Array.from(patientPhones).filter(Boolean);
+      const userArr = Array.from(patientUserIds).filter(Boolean).map(id => new mongoose.Types.ObjectId(id));
+
+      const [profiles, patDocs] = await Promise.all([
+        PatientProfile.find({
+          hospital: hospitalFilter,
+          $or: [
+            ...(phoneArr.length > 0 ? [{ contactNumber: { $in: phoneArr } }] : []),
+            ...(userArr.length > 0 ? [{ user: { $in: userArr } }] : [])
+          ]
+        }).lean(),
+        Patient.find({
+          hospital: hospitalFilter,
+          $or: [
+            ...(phoneArr.length > 0 ? [{ mobile: { $in: phoneArr } }] : []),
+            ...(userArr.length > 0 ? [{ _id: { $in: userArr } }] : [])
+          ]
+        }).lean()
+      ]);
+
+      profiles.forEach((p: any) => {
+        if (p.contactNumber) profileMapByPhone.set(p.contactNumber.trim(), p);
+        if (p.user) profileMapByUser.set(p.user.toString(), p);
+      });
+
+      patDocs.forEach((p: any) => {
+        if (p.mobile) patientMapByPhone.set(p.mobile.trim(), p);
+        if (p._id) patientMapById.set(p._id.toString(), p);
+      });
     }
-
-    const invoices = await PharmaInvoice.find(invoiceQuery)
-      .populate("items.drug", "brand generic form strength unitCost mrp")
-      .populate("items.batch", "batchNo unitCost expiry")
-      .sort({ createdAt: -1 })
-      .lean();
-
-    // Map order by invoiceId and patient
-    const orderMapByInvoiceId = new Map<string, any>();
-    const orderMapByPatient = new Map<string, any>();
-    orders.forEach((o: any) => {
-      if (o.invoiceId) orderMapByInvoiceId.set(o.invoiceId.toString(), o);
-      if (o.patient?._id) orderMapByPatient.set(o.patient._id.toString(), o);
-    });
 
     const groupedPrescriptions: any[] = [];
     let globalSelling = 0;
@@ -4445,136 +4599,291 @@ export class HospitalAdminService {
     let globalCostMissingCount = 0;
     let globalMedicinesCount = 0;
 
-    for (const inv of invoices) {
-      const linkedOrder = orderMapByInvoiceId.get(inv._id.toString());
+    // Process OPD invoices
+    if (!filters?.patientType || filters.patientType === "ALL" || filters.patientType.toUpperCase() === "OPD") {
+      for (const inv of invoices) {
+        const linkedOrder = orderMapByInvoiceId.get(inv._id.toString());
 
-      // Determine patient type (OPD vs IPD)
-      let pType = (inv.patientType || (linkedOrder?.admission ? "IPD" : "OPD")).toUpperCase();
-      if (!pType || pType === "GENERAL" || pType === "OUTPATIENT") pType = "OPD";
-      if (pType.includes("IPD") || pType.includes("INPATIENT")) pType = "IPD";
+        const prescriptionRef = linkedOrder?.prescription?._id?.toString() || linkedOrder?._id?.toString() || inv.invoiceNo;
 
-      // Filter by patientType if specified
-      if (filters?.patientType && filters.patientType !== "ALL" && pType !== filters.patientType.toUpperCase()) {
-        continue;
-      }
+        const itemsList: any[] = [];
+        let groupSelling = 0;
+        let groupPurchasing = 0;
+        let groupHasCostMissing = false;
 
-      const prescriptionRef = linkedOrder?.prescription?._id?.toString() || linkedOrder?._id?.toString() || inv.invoiceNo;
+        if (Array.isArray(inv.items)) {
+          inv.items.forEach((item: any, idx: number) => {
+            const effQty = Math.max(0, (item.qty || 0) - (item.returnedQty || 0));
+            if (effQty <= 0) return;
 
-      const itemsList: any[] = [];
-      let groupSelling = 0;
-      let groupPurchasing = 0;
-      let groupHasCostMissing = false;
+            const unitRate = Number(item.unitRate || item.mrp || (item.amount && item.qty ? item.amount / item.qty : 0));
+            const itemSelling = unitRate * effQty;
 
-      if (Array.isArray(inv.items)) {
-        inv.items.forEach((item: any, idx: number) => {
-          const effQty = Math.max(0, (item.qty || 0) - (item.returnedQty || 0));
-          if (effQty <= 0) return;
+            let rawUnitCost = 0;
+            if (item.batch && typeof item.batch === "object" && item.batch.unitCost > 0) {
+              rawUnitCost = Number(item.batch.unitCost);
+            } else if (item.drug && typeof item.drug === "object" && item.drug.unitCost > 0) {
+              rawUnitCost = Number(item.drug.unitCost);
+            }
 
-          const itemSelling = item.amount != null ? Number(item.amount) : (Number(item.unitRate || item.mrp || 0) * effQty);
+            const unitsPerPack = (item.drug && typeof item.drug === "object" && Number(item.drug.unitsPerPack) > 0)
+              ? Number(item.drug.unitsPerPack)
+              : 1;
 
-          let itemUnitCost = 0;
-          if (item.batch && typeof item.batch === "object" && item.batch.unitCost > 0) {
-            itemUnitCost = Number(item.batch.unitCost);
-          } else if (item.drug && typeof item.drug === "object" && item.drug.unitCost > 0) {
-            itemUnitCost = Number(item.drug.unitCost);
-          }
+            const isMissing = rawUnitCost <= 0;
+            const perUnitPurchaseCost = isMissing ? 0 : (rawUnitCost / unitsPerPack);
 
-          const isMissing = itemUnitCost <= 0;
-          if (isMissing) {
-            groupHasCostMissing = true;
-            globalCostMissingCount += effQty;
-            itemUnitCost = 0;
-          }
+            if (isMissing) {
+              groupHasCostMissing = true;
+              globalCostMissingCount += effQty;
+            }
 
-          const itemPurchase = itemUnitCost * effQty;
-          const itemProfit = isMissing ? 0 : Math.max(0, itemSelling - itemPurchase);
-          const itemMargin = (!isMissing && itemSelling > 0)
-            ? Math.round(((itemProfit / itemSelling) * 100) * 10) / 10
-            : 0;
+            const itemPurchase = perUnitPurchaseCost * effQty;
+            const itemProfit = isMissing ? 0 : Math.max(0, itemSelling - itemPurchase);
+            const itemMargin = (!isMissing && itemSelling > 0)
+              ? Math.round(((itemProfit / itemSelling) * 100) * 10) / 10
+              : 0;
 
-          groupSelling += itemSelling;
-          groupPurchasing += itemPurchase;
-          globalMedicinesCount += effQty;
+            groupSelling += itemSelling;
+            groupPurchasing += itemPurchase;
+            globalMedicinesCount += effQty;
 
-          itemsList.push({
-            id: item._id?.toString() || `item-${idx}`,
-            name: item.productName || item.drug?.brand || "Medicine",
-            brandName: item.drug?.brand || item.productName || "Medicine",
-            genericName: item.drug?.generic || "",
-            form: item.drug?.form || "UNIT",
-            strength: item.drug?.strength || "-",
-            batchNo: item.batchNo || item.batch?.batchNo || "N/A",
-            expiryDate: item.expiryDate || item.batch?.expiry || null,
-            quantity: effQty,
-            unitPurchasePrice: itemUnitCost,
-            totalPurchasePrice: Math.round(itemPurchase * 100) / 100,
-            unitSellingPrice: Math.round((itemSelling / effQty) * 100) / 100,
-            totalSellingPrice: Math.round(itemSelling * 100) / 100,
-            profit: Math.round(itemProfit * 100) / 100,
-            profitMargin: itemMargin,
-            costMissing: isMissing
+            itemsList.push({
+              id: item._id?.toString() || `item-${idx}`,
+              name: item.productName || item.drug?.brand || "Medicine",
+              brandName: item.drug?.brand || item.productName || "Medicine",
+              genericName: item.drug?.generic || "",
+              form: item.drug?.form || "UNIT",
+              strength: item.drug?.strength || "-",
+              batchNo: item.batchNo || item.batch?.batchNo || "N/A",
+              expiryDate: item.expiryDate || item.batch?.expiry || item.drug?.expiryDate || null,
+              quantity: effQty,
+              unitsPerPack: unitsPerPack,
+              unitPurchasePrice: Math.round(perUnitPurchaseCost * 100) / 100,
+              totalPurchasePrice: Math.round(itemPurchase * 100) / 100,
+              unitSellingPrice: Math.round((itemSelling / effQty) * 100) / 100,
+              totalSellingPrice: Math.round(itemSelling * 100) / 100,
+              profit: Math.round(itemProfit * 100) / 100,
+              profitMargin: itemMargin,
+              costMissing: isMissing
+            });
           });
+        }
+
+        if (itemsList.length === 0) continue;
+
+        const groupProfit = Math.max(0, groupSelling - groupPurchasing);
+        const groupMargin = groupSelling > 0
+          ? Math.round(((groupProfit / groupSelling) * 100) * 10) / 10
+          : 0;
+
+        globalSelling += groupSelling;
+        globalPurchasing += groupPurchasing;
+
+        const patMobile = (inv.customerPhone || (inv as any).customerMobile || linkedOrder?.patient?.mobile || "").trim();
+        const patDoc = patMobile ? patientMapByPhone.get(patMobile) : null;
+        const patProfile = (linkedOrder?.patient?._id ? profileMapByUser.get(linkedOrder.patient._id.toString()) : null) || (patMobile ? profileMapByPhone.get(patMobile) : null);
+
+        const patientNameDisplay = formatPatientDisplayName(
+          inv.patientName || linkedOrder?.patient?.name || patDoc?.name || "Patient",
+          inv.honorific || linkedOrder?.patient?.honorific || patProfile?.honorific || patDoc?.honorific
+        );
+
+        const resolvedMrn = inv.mrn || linkedOrder?.patient?.mrn || patProfile?.mrn || patDoc?.mrn || "N/A";
+        const resolvedGender = linkedOrder?.patient?.gender || (inv as any).gender || patProfile?.gender || patDoc?.gender || "";
+        let resolvedAge: string | number = linkedOrder?.patient?.age || (inv as any).age || patDoc?.age || "";
+        if (!resolvedAge && patProfile?.dob) {
+          resolvedAge = this.calculatePatientAge(patProfile.dob);
+        }
+
+        // Filter by search if provided
+        if (filters?.search) {
+          const s = filters.search.toLowerCase();
+          const matchesPatient = (inv.patientName || "").toLowerCase().includes(s) || resolvedMrn.toLowerCase().includes(s);
+          const matchesMedicine = itemsList.some((m) => m.brandName.toLowerCase().includes(s) || m.genericName.toLowerCase().includes(s));
+          const matchesInvoice = (inv.invoiceNo || "").toLowerCase().includes(s);
+          if (!matchesPatient && !matchesMedicine && !matchesInvoice) {
+            continue;
+          }
+        }
+
+        const prescribingDoctor = (linkedOrder?.doctor as any)?.user?.name || inv.doctorName || docName;
+
+        groupedPrescriptions.push({
+          id: inv._id.toString(),
+          invoiceNo: inv.invoiceNo,
+          prescriptionId: linkedOrder?.prescription?._id?.toString() || prescriptionRef,
+          date: inv.createdAt,
+          doctorName: prescribingDoctor,
+          patient: {
+            name: patientNameDisplay,
+            mrn: resolvedMrn,
+            gender: resolvedGender,
+            age: resolvedAge,
+            type: "OPD"
+          },
+          payment: {
+            status: inv.status || "PAID",
+            method: inv.mode || (inv as any).paymentMethod || "CASH",
+            paidAmount: inv.paid || inv.netPayable || 0,
+            netPayable: inv.netPayable || 0
+          },
+          totals: {
+            sellingAmount: Math.round(groupSelling),
+            purchasingAmount: Math.round(groupPurchasing),
+            profit: Math.round(groupProfit),
+            profitMargin: groupMargin,
+            itemsCount: itemsList.length,
+            hasCostMissing: groupHasCostMissing
+          },
+          medicines: itemsList
         });
       }
-
-      if (itemsList.length === 0) continue;
-
-      const groupProfit = Math.max(0, groupSelling - groupPurchasing);
-      const groupMargin = groupSelling > 0
-        ? Math.round(((groupProfit / groupSelling) * 100) * 10) / 10
-        : 0;
-
-      globalSelling += groupSelling;
-      globalPurchasing += groupPurchasing;
-
-      // Filter by search if provided
-      if (filters?.search) {
-        const s = filters.search.toLowerCase();
-        const matchesPatient = (inv.patientName || "").toLowerCase().includes(s) || (inv.mrn || "").toLowerCase().includes(s);
-        const matchesMedicine = itemsList.some((m) => m.brandName.toLowerCase().includes(s) || m.genericName.toLowerCase().includes(s));
-        const matchesInvoice = (inv.invoiceNo || "").toLowerCase().includes(s);
-        if (!matchesPatient && !matchesMedicine && !matchesInvoice) {
-          continue;
-        }
-      }
-
-      const patientNameDisplay = formatPatientDisplayName(
-        inv.patientName || linkedOrder?.patient?.name || "Patient",
-        inv.honorific || linkedOrder?.patient?.honorific
-      );
-
-      const prescribingDoctor = (linkedOrder?.doctor as any)?.user?.name || inv.doctorName || docName;
-
-      groupedPrescriptions.push({
-        id: inv._id.toString(),
-        invoiceNo: inv.invoiceNo,
-        prescriptionId: linkedOrder?.prescription?._id?.toString() || prescriptionRef,
-        date: inv.createdAt,
-        doctorName: prescribingDoctor,
-        patient: {
-          name: patientNameDisplay,
-          mrn: inv.mrn || linkedOrder?.patient?.mrn || "N/A",
-          gender: linkedOrder?.patient?.gender || (inv as any).gender || "",
-          age: linkedOrder?.patient?.age || (inv as any).age || "",
-          type: pType
-        },
-        payment: {
-          status: inv.status || "PAID",
-          method: inv.mode || (inv as any).paymentMethod || "CASH",
-          paidAmount: inv.paid || inv.netPayable || 0,
-          netPayable: inv.netPayable || 0
-        },
-        totals: {
-          sellingAmount: Math.round(groupSelling),
-          purchasingAmount: Math.round(groupPurchasing),
-          profit: Math.round(groupProfit),
-          profitMargin: groupMargin,
-          itemsCount: itemsList.length,
-          hasCostMissing: groupHasCostMissing
-        },
-        medicines: itemsList
-      });
     }
+
+    // Process IPD medicine issuances
+    if (!filters?.patientType || filters.patientType === "ALL" || filters.patientType.toUpperCase() === "IPD") {
+      for (const iss of rawIssuances) {
+        const admId = (iss.admission?._id || iss.admission)?.toString();
+        const linkedOrder = admId ? orderMapByAdmissionId.get(admId) : null;
+        const patId = (iss.patient?._id || iss.patient)?.toString();
+        const patDoc = (patId ? patientMapById.get(patId) : null) || iss.patient;
+        const patMobile = (patDoc?.mobile || "").trim();
+        const patProfile = (patId ? profileMapByUser.get(patId) : null) || (patMobile ? profileMapByPhone.get(patMobile) : null);
+
+        const itemsList: any[] = [];
+        let groupSelling = 0;
+        let groupPurchasing = 0;
+        let groupHasCostMissing = false;
+
+        if (Array.isArray(iss.items)) {
+          iss.items.forEach((item: any, idx: number) => {
+            const effQty = Math.max(0, (item.issuedQty || 0) - (item.returnedQty || 0));
+            if (effQty <= 0) return;
+
+            const unitRate = Number(item.unitRate || (item.totalAmount && item.issuedQty ? item.totalAmount / item.issuedQty : 0));
+            const itemSelling = unitRate * effQty;
+
+            let rawUnitCost = 0;
+            if (item.batch && typeof item.batch === "object" && item.batch.unitCost > 0) {
+              rawUnitCost = Number(item.batch.unitCost);
+            } else if (item.product && typeof item.product === "object" && item.product.unitCost > 0) {
+              rawUnitCost = Number(item.product.unitCost);
+            }
+
+            const unitsPerPack = (item.product && typeof item.product === "object" && Number(item.product.unitsPerPack) > 0)
+              ? Number(item.product.unitsPerPack)
+              : 1;
+
+            const isMissing = rawUnitCost <= 0;
+            const perUnitPurchaseCost = isMissing ? 0 : (rawUnitCost / unitsPerPack);
+
+            if (isMissing) {
+              groupHasCostMissing = true;
+              globalCostMissingCount += effQty;
+            }
+
+            const itemPurchase = perUnitPurchaseCost * effQty;
+            const itemProfit = isMissing ? 0 : Math.max(0, itemSelling - itemPurchase);
+            const itemMargin = (!isMissing && itemSelling > 0)
+              ? Math.round(((itemProfit / itemSelling) * 100) * 10) / 10
+              : 0;
+
+            groupSelling += itemSelling;
+            groupPurchasing += itemPurchase;
+            globalMedicinesCount += effQty;
+
+            itemsList.push({
+              id: item._id?.toString() || `item-ipd-${idx}`,
+              name: item.productName || item.product?.brand || "Medicine",
+              brandName: item.product?.brand || item.productName || "Medicine",
+              genericName: item.product?.generic || "",
+              form: item.product?.form || "UNIT",
+              strength: item.product?.strength || "-",
+              batchNo: item.batchNo || item.batch?.batchNo || "N/A",
+              expiryDate: item.batch?.expiry || item.product?.expiryDate || null,
+              quantity: effQty,
+              unitsPerPack: unitsPerPack,
+              unitPurchasePrice: Math.round(perUnitPurchaseCost * 100) / 100,
+              totalPurchasePrice: Math.round(itemPurchase * 100) / 100,
+              unitSellingPrice: Math.round((itemSelling / effQty) * 100) / 100,
+              totalSellingPrice: Math.round(itemSelling * 100) / 100,
+              profit: Math.round(itemProfit * 100) / 100,
+              profitMargin: itemMargin,
+              costMissing: isMissing
+            });
+          });
+        }
+
+        if (itemsList.length === 0) continue;
+
+        const groupProfit = Math.max(0, groupSelling - groupPurchasing);
+        const groupMargin = groupSelling > 0
+          ? Math.round(((groupProfit / groupSelling) * 100) * 10) / 10
+          : 0;
+
+        globalSelling += groupSelling;
+        globalPurchasing += groupPurchasing;
+
+        const resolvedName = patDoc?.name || "Inpatient";
+        const resolvedHonorific = patProfile?.honorific || patDoc?.honorific || "";
+        const patientNameDisplay = formatPatientDisplayName(resolvedName, resolvedHonorific);
+        const resolvedMrn = patProfile?.mrn || patDoc?.mrn || iss.admissionId || "N/A";
+        const resolvedGender = patDoc?.gender || patProfile?.gender || "";
+        let resolvedAge: string | number = patDoc?.age || "";
+        if (!resolvedAge && patProfile?.dob) {
+          resolvedAge = this.calculatePatientAge(patProfile.dob);
+        }
+
+        const invoiceDisplay = iss.invoiceNo || iss.admissionId || `IPD-${iss._id.toString().slice(-8).toUpperCase()}`;
+
+        // Filter by search if provided
+        if (filters?.search) {
+          const s = filters.search.toLowerCase();
+          const matchesPatient = resolvedName.toLowerCase().includes(s) || resolvedMrn.toLowerCase().includes(s);
+          const matchesMedicine = itemsList.some((m) => m.brandName.toLowerCase().includes(s) || m.genericName.toLowerCase().includes(s));
+          const matchesInvoice = invoiceDisplay.toLowerCase().includes(s);
+          if (!matchesPatient && !matchesMedicine && !matchesInvoice) {
+            continue;
+          }
+        }
+
+        const prescribingDoctor = (linkedOrder?.doctor as any)?.user?.name || docName;
+
+        groupedPrescriptions.push({
+          id: iss._id.toString(),
+          invoiceNo: invoiceDisplay,
+          prescriptionId: linkedOrder?.prescription?._id?.toString() || linkedOrder?._id?.toString() || iss._id.toString(),
+          date: iss.issuedAt || iss.createdAt,
+          doctorName: prescribingDoctor,
+          patient: {
+            name: patientNameDisplay,
+            mrn: resolvedMrn,
+            gender: resolvedGender,
+            age: resolvedAge,
+            type: "IPD"
+          },
+          payment: {
+            status: iss.status === "ISSUED" ? "PAID" : iss.status,
+            method: "IPD BILLING",
+            paidAmount: Math.round(groupSelling),
+            netPayable: Math.round(groupSelling)
+          },
+          totals: {
+            sellingAmount: Math.round(groupSelling),
+            purchasingAmount: Math.round(groupPurchasing),
+            profit: Math.round(groupProfit),
+            profitMargin: groupMargin,
+            itemsCount: itemsList.length,
+            hasCostMissing: groupHasCostMissing
+          },
+          medicines: itemsList
+        });
+      }
+    }
+
+    // Sort all prescriptions by date descending
+    groupedPrescriptions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     const netProfit = Math.max(0, globalSelling - globalPurchasing);
     const overallMargin = globalSelling > 0
@@ -4585,7 +4894,8 @@ export class HospitalAdminService {
       doctor: {
         id: doctorId,
         name: docName,
-        department: docDept
+        department: docDept,
+        phone: docPhone
       },
       summary: {
         totalSelling: Math.round(globalSelling),
