@@ -178,6 +178,8 @@ export const issueForIPD = asyncHandler(async (req: Request, res: Response) => {
     // 5. Create issuance record with formatted Invoice ID
     const invoiceNo = await generatePharmaId(pharmaProfile._id, pharmaProfile.businessName || "PHARMA", "issuance");
 
+    const resolvedPrescriptionSource = orderId ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY";
+
     const issuance = await IPDMedicineIssuance.create({
         admissionId,
         invoiceNo,
@@ -193,6 +195,8 @@ export const issueForIPD = asyncHandler(async (req: Request, res: Response) => {
         status: "ISSUED",
         totalAmount,
         notes,
+        prescriptionSource: resolvedPrescriptionSource,
+        orderId: orderId || undefined,
         issuedAt: new Date(),
     });
 
@@ -202,8 +206,19 @@ export const issueForIPD = asyncHandler(async (req: Request, res: Response) => {
         admission: admission._id,
         hospital: hospitalId,
         category: "Pharmacy",
-        description: `Pharmacy Issuance - ${issuanceItems.length} item(s)`,
+        description: `Pharmacy Issuance (${invoiceNo})`,
         amount: totalAmount,
+        prescriptionSource: resolvedPrescriptionSource,
+        orderId: orderId || undefined,
+        medicines: issuanceItems.map(it => ({
+            medicineName: it.productName,
+            rate: it.unitRate,
+            quantity: it.issuedQty,
+            amount: it.totalAmount,
+            batchNo: it.batchNo,
+            frequency: it.frequency,
+        })),
+        isPharmaOrder: true,
         date: new Date(),
         addedBy: issuedBy,
         status: "Active",

@@ -30,16 +30,18 @@ export interface IIPDMedicineIssuance extends Document {
     totalAmount: number;
     invoiceNo?: string;
     notes?: string;
+    orderId?: mongoose.Types.ObjectId;
+    prescriptionSource?: "DOCTOR_DIGITAL" | "DIRECT_PHARMACY";
     issuedAt: Date;
     createdAt: Date;
     updatedAt: Date;
 }
 
 const issuanceItemSchema = new Schema<IIssuanceItem>({
-    product: { type: Schema.Types.ObjectId, ref: "Product", required: true },
-    batch: { type: Schema.Types.ObjectId, ref: "Batch", required: true },
+    product: { type: Schema.Types.ObjectId, ref: "Product", required: false },
+    batch: { type: Schema.Types.ObjectId, ref: "Batch", required: false },
     productName: { type: String, required: true },
-    batchNo: { type: String, required: true },
+    batchNo: { type: String, required: false, default: "" },
     issuedQty: { type: Number, required: true, min: 1 },
     returnedQty: { type: Number, default: 0, min: 0 },
     unitRate: { type: Number, required: true },
@@ -81,6 +83,12 @@ const ipdMedicineIssuanceSchema = new Schema<IIPDMedicineIssuance>(
         totalAmount: { type: Number, required: true },
         invoiceNo: { type: String, unique: true, sparse: true },
         notes: { type: String },
+        orderId: { type: Schema.Types.ObjectId, ref: "PharmacyOrder" },
+        prescriptionSource: {
+            type: String,
+            enum: ["DOCTOR_DIGITAL", "DIRECT_PHARMACY"],
+            default: "DIRECT_PHARMACY"
+        },
         issuedAt: { type: Date, default: Date.now },
     },
     { timestamps: true },

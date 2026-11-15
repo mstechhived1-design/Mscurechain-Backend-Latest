@@ -116,6 +116,8 @@ export interface IIPDExtraCharge extends Document {
   addedBy: Types.ObjectId;
   status: "Active" | "Reversed";
   reversalReason?: string;
+  medicines?: any[];
+  isPharmaOrder?: boolean;
   isMerged?: boolean;
   mergedFrom?: Array<{
     _id?: any;

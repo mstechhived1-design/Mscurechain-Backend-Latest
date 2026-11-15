@@ -27,6 +27,8 @@ export interface IPharmaInvoice extends Document {
   mrn?: string;
   patientType?: string;
   isIPD?: boolean;
+  isWalkIn?: boolean;
+  appointmentId?: string;
   admission?: mongoose.Types.ObjectId;
   admissionId?: string;
   admissionDate?: Date;
@@ -65,6 +67,8 @@ export interface IPharmaInvoice extends Document {
   hospital: mongoose.Types.ObjectId;
   pharmacy: mongoose.Types.ObjectId;
   notes?: string;
+  orderId?: mongoose.Types.ObjectId;
+  prescriptionSource?: "DOCTOR_DIGITAL" | "DIRECT_PHARMACY";
   createdAt: Date;
   updatedAt: Date;
   isEdited?: boolean;
@@ -101,7 +105,9 @@ const invoiceSchema = new Schema<IPharmaInvoice>(
     patient: { type: mongoose.Schema.Types.ObjectId, ref: "Patient" },
     admission: { type: mongoose.Schema.Types.ObjectId, ref: "IPDAdmission" },
     admissionId: { type: String, trim: true },
+    appointmentId: { type: String, trim: true },
     isIPD: { type: Boolean, default: false },
+    isWalkIn: { type: Boolean, default: false },
     patientName: { type: String, required: true, trim: true },
     honorific: { type: String, trim: true },
     patientAddress: { type: String, trim: true },
@@ -168,6 +174,12 @@ const invoiceSchema = new Schema<IPharmaInvoice>(
       index: true,
     },
     notes: String,
+    orderId: { type: Schema.Types.ObjectId, ref: "PharmacyOrder" },
+    prescriptionSource: {
+      type: String,
+      enum: ["DOCTOR_DIGITAL", "DIRECT_PHARMACY"],
+      default: "DIRECT_PHARMACY"
+    },
     isEdited: { type: Boolean, default: false },
     editReason: { type: String },
     editedAt: { type: Date },

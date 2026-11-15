@@ -14,6 +14,7 @@ import Prescription from "../../Prescription/Models/Prescription.js";
 import PharmacyOrder from "../../Pharmacy/Models/PharmacyOrder.js";
 import LabOrder from "../../Lab/Models/LabOrder.js";
 import IPDMedicineIssuance from "../../Pharmacy/Models/IPDMedicineIssuance.js";
+import PharmaInvoice from "../../Pharmacy/Models/Invoice.js";
 import { generateTransactionId, generateReceiptNumber } from "../../utils/idGenerator.js";
 import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
@@ -226,6 +227,8 @@ export const calculateBillBreakdown = async (admissionId: string) => {
         _id: order._id,
         description: `Pharmacy Order (${order.tokenNumber || order._id})`,
         category: "Pharmacy",
+        prescriptionSource: "DOCTOR_DIGITAL",
+        orderId: order._id,
         amount,
         date: order.createdAt,
         status: "Active",
@@ -389,10 +392,15 @@ export const calculateBillBreakdown = async (admissionId: string) => {
       );
 
       if (!existsInOrders) {
+        const hasDoctorOrder = Boolean(issuance.orderId || (issuance.notes && /PHARMA-\d+/i.test(issuance.notes)));
+        const resolvedSource = issuance.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
+
         pharmaOrderItems.push({
           _id: issuance._id,
           description: `Pharmacy Issuance (${issuance.invoiceNo || 'Manual'})`,
           category: "Pharmacy",
+          prescriptionSource: resolvedSource,
+          orderId: issuance.orderId,
           amount,
           date: issuance.issuedAt,
           status: "Active",
@@ -401,6 +409,59 @@ export const calculateBillBreakdown = async (admissionId: string) => {
         });
         
         // Update category breakdown and total if we added a new item
+        categoryBreakdown["Pharmacy"] = (categoryBreakdown["Pharmacy"] || 0) + amount;
+        totalExtraCharge += amount;
+      }
+    }
+  });
+
+  // 2e. Aggregate Pharma Invoices linked to this admission
+  const linkedInvoices = await PharmaInvoice.find({
+    $or: [
+      { admission: admission._id },
+      { admissionId: admission.admissionId },
+    ],
+  }).lean();
+
+  linkedInvoices.forEach((inv: any) => {
+    const amount = inv.netPayable || inv.paid || 0;
+    if (amount > 0) {
+      const detailedMedicines = (inv.items || []).map((m: any) => ({
+        medicineName: m.productName,
+        quantity: m.qty || 1,
+        rate: m.unitRate || m.mrp || 0,
+        amount: m.amount || 0,
+        batchNo: m.batchNo,
+        expiryDate: m.expiryDate
+      }));
+
+      const alreadyInExtra = extraCharges.some(ec =>
+        ((ec.category as any) === "Pharmacy" || (ec.category as any) === "Medicine") &&
+        ec.description &&
+        (ec.description.includes(inv.invoiceNo) || (ec.amount === amount && Math.abs(new Date(ec.date).getTime() - new Date(inv.createdAt).getTime()) < 60000))
+      );
+
+      const alreadyInOrders = pharmaOrderItems.some(poi =>
+        poi.description?.includes(inv.invoiceNo) ||
+        (poi.amount === amount && Math.abs(new Date(poi.date).getTime() - new Date(inv.createdAt).getTime()) < 60000)
+      );
+
+      if (!alreadyInExtra && !alreadyInOrders) {
+        const hasDoctorOrder = Boolean(inv.orderId || (inv.notes && /PHARMA-\d+/i.test(inv.notes)));
+        const resolvedSource = inv.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
+
+        pharmaOrderItems.push({
+          _id: inv._id,
+          description: `Pharmacy Bill (${inv.invoiceNo})`,
+          category: "Pharmacy",
+          prescriptionSource: resolvedSource,
+          orderId: inv.orderId,
+          amount,
+          date: inv.createdAt,
+          status: "Active",
+          isPharmaOrder: true,
+          medicines: detailedMedicines,
+        });
         categoryBreakdown["Pharmacy"] = (categoryBreakdown["Pharmacy"] || 0) + amount;
         totalExtraCharge += amount;
       }
@@ -422,26 +483,40 @@ export const calculateBillBreakdown = async (admissionId: string) => {
     }
   });
 
-  // 3b. Find transactions for linked orders (Pharmacy/Lab) that were paid at the counter
+  // 3b. Find transactions for linked orders/invoices (Pharmacy/Lab) that were paid at the counter
   // but might not be in IPDAdvancePayment collection
   const orderIds = [
     ...pharmaOrders.map((o) => o._id),
     ...labOrders.map((o) => o._id),
+    ...linkedInvoices.map((i) => i._id),
+    ...medicineIssuances.map((m) => m._id),
   ];
   
   if (orderIds.length > 0) {
+    // Only include real payments collected at counter (exclude internal ledger tracking "other", "ipd settled", "ipd billing", "credit")
     const externalTransactions = await Transaction.find({
       referenceId: { $in: orderIds },
       status: "completed",
+      paymentMode: { $nin: ["other", "OTHER", "ipd settled", "IPD SETTLED", "ipd billing", "IPD BILLING", "credit", "CREDIT"] },
     }).lean();
 
-    externalTransactions.forEach((tx) => {
-      // Avoid duplicates if it's already in advances (checked by receipt or reference)
+    externalTransactions.forEach((tx: any) => {
+      // Avoid duplicates if it's already in advances (checked by receipt, invoice, reference, or transaction ID)
+      const txRefStr = tx.referenceId ? tx.referenceId.toString() : "";
       const exists = advances.some(
-        (adv) =>
+        (adv: any) =>
           adv.reference === tx.receiptNumber ||
           adv.reference === tx.transactionId ||
-          (adv as any).transactionId === tx.transactionId
+          adv.reference === tx.invoiceNumber ||
+          adv.receiptNumber === tx.receiptNumber ||
+          adv.receiptNumber === tx.invoiceNumber ||
+          (adv.reference && txRefStr && adv.reference === txRefStr) ||
+          ((adv as any).transactionId && (adv as any).transactionId === tx.transactionId) ||
+          (adv.notes && (
+            (tx.receiptNumber && adv.notes.includes(tx.receiptNumber)) ||
+            (tx.invoiceNumber && adv.notes.includes(tx.invoiceNumber)) ||
+            (txRefStr && adv.notes.includes(txRefStr))
+          ))
       );
 
       if (!exists) {
@@ -451,7 +526,7 @@ export const calculateBillBreakdown = async (admissionId: string) => {
           mode: tx.paymentMode || "Other",
           transactionType: "Advance", // Treat as payment towards bill
           date: tx.date || tx.createdAt,
-          reference: tx.receiptNumber || tx.transactionId,
+          reference: tx.receiptNumber || tx.invoiceNumber || tx.transactionId,
           description: tx.type === "pharmacy" ? "Pharmacy Payment (Counter)" : "Lab Payment (Counter)",
           isExternal: true,
         };
@@ -607,7 +682,20 @@ export const calculateBillBreakdown = async (admissionId: string) => {
     },
     extraCharges: {
       // Merge manual extra charges + lab order + pharma order charges into a single flat list
-      items: [...extraCharges, ...labOrderItems, ...pharmaOrderItems],
+      items: [
+        ...extraCharges.map((ec: any) => {
+          if (ec.category === "Pharmacy" || ec.category === "Medicine") {
+            const hasDoctorOrder = Boolean(ec.orderId || (ec.description && /PHARMA-\d+/i.test(ec.description)));
+            return {
+              ...ec,
+              prescriptionSource: ec.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY")
+            };
+          }
+          return ec;
+        }),
+        ...labOrderItems,
+        ...pharmaOrderItems
+      ],
       categoryBreakdown,
       total: totalExtraCharge,
     },

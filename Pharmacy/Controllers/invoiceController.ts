@@ -41,15 +41,37 @@ export const getInvoices = async (req: PharmaRequest, res: Response) => {
 
     const filterType = (patientType as string || "").toUpperCase();
 
+    const isWalkInQuery = filterType === "WALKIN" || filterType === "WALK-IN";
+    const isOpdQuery = filterType === "OPD";
+    const isIpdQuery = filterType === "IPD";
+    const isAllQuery = filterType === "ALL";
+    const isHospitalQuery = filterType === "HOSPITAL" || (!isWalkInQuery && !isOpdQuery && !isIpdQuery && !isAllQuery);
+
     let matchStage: any = {
       pharmacy: new mongoose.Types.ObjectId(pharmacyId?.toString()),
     };
 
-    if (filterType === "OPD") {
-      matchStage.patientType = { $ne: "IPD" };
+    if (isWalkInQuery) {
+      // Explicitly show only walk-in retail counter patients
+      matchStage.$or = [
+        { isWalkIn: true },
+        { patientType: { $in: ["WALKIN", "Walk-in", "walkin", "Walk-In", "WALK_IN"] } }
+      ];
+    } else if (isOpdQuery) {
+      // Hospital OPD patients only (exclude walk-in and IPD)
+      matchStage.isWalkIn = { $ne: true };
+      matchStage.patientType = { $nin: ["IPD", "WALKIN", "Walk-in", "walkin", "Walk-In", "WALK_IN"] };
       matchStage.isIPD = { $ne: true };
-    } else if (filterType === "IPD") {
+    } else if (isIpdQuery) {
+      // Hospital IPD patients only
+      matchStage.isWalkIn = { $ne: true };
       matchStage.$or = [{ patientType: "IPD" }, { isIPD: true }];
+    } else if (isAllQuery) {
+      // Show ALL (Hospital + Walk-in)
+    } else {
+      // Default / HOSPITAL: Show hospital patients only (do not show walk-in patients)
+      matchStage.isWalkIn = { $ne: true };
+      matchStage.patientType = { $nin: ["WALKIN", "Walk-in", "walkin", "Walk-In", "WALK_IN"] };
     }
 
     if (startDate || endDate) {
@@ -65,15 +87,34 @@ export const getInvoices = async (req: PharmaRequest, res: Response) => {
     if (status) matchStage.status = status;
     if (mode) matchStage.mode = mode;
 
+    let matchedPatientIds: any[] = [];
     if (search) {
       const escapedSearch = (search as string).replace(
         /[/\-\\^$*+?.()|[\]{}]/g,
         "\\$&",
       );
+      const cleanPhone = (search as string).replace(/[^0-9]/g, "");
+
+      try {
+        const PatientModel = mongoose.model("Patient");
+        const patientConditions: any[] = [
+          { name: { $regex: escapedSearch, $options: "i" } }
+        ];
+        if (cleanPhone) {
+          patientConditions.push({ mobile: { $regex: cleanPhone, $options: "i" } });
+        }
+        const matchedPatients = await PatientModel.find({ $or: patientConditions }).select("_id").lean();
+        matchedPatientIds = matchedPatients.map((p: any) => p._id);
+      } catch (err) {
+        console.warn("Patient search lookup error:", err);
+      }
+
       matchStage.$or = [
         { invoiceNo: { $regex: escapedSearch, $options: "i" } },
         { patientName: { $regex: escapedSearch, $options: "i" } },
         { customerPhone: { $regex: escapedSearch, $options: "i" } },
+        { "items.productName": { $regex: escapedSearch, $options: "i" } },
+        ...(matchedPatientIds.length > 0 ? [{ patient: { $in: matchedPatientIds } }] : [])
       ];
     }
 
@@ -97,20 +138,33 @@ export const getInvoices = async (req: PharmaRequest, res: Response) => {
     }
 
     if (search) {
-      ipdMatchStage.admissionId = { $regex: search as string, $options: "i" };
+      const escapedSearch = (search as string).replace(
+        /[/\-\\^$*+?.()|[\]{}]/g,
+        "\\$&",
+      );
+      ipdMatchStage.$or = [
+        { invoiceNo: { $regex: escapedSearch, $options: "i" } },
+        { admissionId: { $regex: escapedSearch, $options: "i" } },
+        { patientName: { $regex: escapedSearch, $options: "i" } },
+        { customerPhone: { $regex: escapedSearch, $options: "i" } },
+        { "items.productName": { $regex: escapedSearch, $options: "i" } },
+        ...(matchedPatientIds.length > 0 ? [{ patient: { $in: matchedPatientIds } }] : [])
+      ];
     }
+
+    const shouldFetchIpdIssuance = isIpdQuery || isHospitalQuery || isAllQuery;
 
     const [totalInvoices, invoices, ipdIssuances] = await Promise.all([
       PharmaInvoice.countDocuments(matchStage),
       PharmaInvoice.find(matchStage)
         .sort({ createdAt: -1 })
-        .skip(filterType === "OPD" || filterType === "" || filterType === "ALL" ? skip : 0)
-        .limit(Number(limit))
+        .skip(isWalkInQuery || isOpdQuery ? skip : 0)
+        .limit(isWalkInQuery || isOpdQuery ? Number(limit) : 1000)
         .populate("createdBy", "name email role")
         .populate("items.batch", "batchNo expiry")
         .populate("patient", "name honorific mobile")
         .lean(),
-      filterType === "OPD" ? Promise.resolve([]) : IPDMedicineIssuance.find(ipdMatchStage)
+      !shouldFetchIpdIssuance ? Promise.resolve([]) : IPDMedicineIssuance.find(ipdMatchStage)
         .sort({ issuedAt: -1 })
         // Note: For aggregation to work correctly with pagination, 
         // we fetch all relevant for now or handle via pipeline.
@@ -121,7 +175,7 @@ export const getInvoices = async (req: PharmaRequest, res: Response) => {
         .populate("items.product", "hsnCode")
         .populate({
           path: "admission",
-          select: "primaryDoctor paymentStatus",
+          select: "primaryDoctor paymentStatus status",
           populate: {
             path: "primaryDoctor",
             select: "user",
@@ -134,90 +188,98 @@ export const getInvoices = async (req: PharmaRequest, res: Response) => {
         .lean(),
     ]);
 
-    // Group IPD Issuances by Admission ID to avoid duplicates in transaction list
-    const groupedIpdMap = new Map();
-    ipdIssuances.forEach((iss: any) => {
-      const key = iss.admissionId;
-      if (!groupedIpdMap.has(key)) {
-        const pName = (iss.patient as any)?.honorific
-          ? `${(iss.patient as any).honorific} ${(iss.patient as any).name}`
-          : ((iss.patient as any)?.name || iss.patientName || "IPD Patient");
+    // Map individual IPD Issuances (Each issuance is its own separate transaction & invoice)
+    const mappedIpd = ipdIssuances.map((iss: any) => {
+      const pName = (iss.patient as any)?.honorific
+        ? `${(iss.patient as any).honorific} ${(iss.patient as any).name}`
+        : ((iss.patient as any)?.name || iss.patientName || "IPD Patient");
 
-        groupedIpdMap.set(key, {
-          _id: iss._id,
-          invoiceNo: iss.invoiceNo || iss.admissionId,
-          patientName: pName,
-          customerPhone: (iss.patient as any)?.mobile || iss.customerPhone || "-",
-          netPayable: 0,
-          subTotal: 0,
-          taxTotal: 0,
-          discountTotal: 0,
-          status: (iss.admission as any)?.paymentStatus === "paid" || iss.status === "CLOSED" || iss.status === "ISSUED" ? "PAID" : "PENDING",
-          mode: "IPD BILLING",
-          createdAt: iss.issuedAt,
-          updatedAt: iss.updatedAt,
-          items: [],
-          createdBy: iss.issuedBy,
-          doctorName: (iss.admission as any)?.primaryDoctor?.user?.name || "IPD Admission",
-          isIPD: true,
-          patientType: "IPD"
-        });
-      }
+      const isDischarged = (iss.admission as any)?.status === "Discharged" || iss.status === "CLOSED";
+      const isPaid = iss.status === "CLOSED" || (iss.paid !== undefined && iss.paid > 0 && iss.paid >= iss.totalAmount) || isDischarged;
+      const netPayable = Math.round((iss.totalAmount || 0) * 100) / 100;
+      const paid = iss.paid !== undefined ? Math.round(Number(iss.paid) * 100) / 100 : (isPaid ? netPayable : 0);
+      const balance = Math.round(Math.max(0, netPayable - paid) * 100) / 100;
 
-      const group = groupedIpdMap.get(key);
-      group.netPayable += (iss.totalAmount || 0);
-      group.subTotal += (iss.totalAmount || 0);
+      const hasDoctorOrder = Boolean(iss.orderId || (iss.notes && /PHARMA-\d+/i.test(iss.notes)));
+      const prescriptionSource = iss.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
 
-      // Merge items (optional: consolidate similar items or just list all)
-      iss.items.forEach((i: any) => {
-        group.items.push({
+      return {
+        _id: iss._id,
+        invoiceNo: iss.invoiceNo || `ISS-${iss._id.toString().slice(-6).toUpperCase()}`,
+        patientName: pName,
+        customerPhone: (iss.patient as any)?.mobile || iss.customerPhone || "-",
+        netPayable,
+        subTotal: netPayable,
+        taxTotal: 0,
+        discountTotal: 0,
+        paid,
+        balance,
+        status: isPaid ? "PAID" : "CHARGED TO IPD",
+        mode: iss.mode || (isPaid ? "CASH" : "IPD BILLING"),
+        createdAt: iss.issuedAt || iss.createdAt,
+        updatedAt: iss.updatedAt,
+        prescriptionSource,
+        orderId: iss.orderId,
+        notes: iss.notes,
+        items: (iss.items || []).map((i: any) => ({
+          product: i.product,
+          productId: i.product,
+          drug: i.product,
+          batch: i.batch,
+          batchId: i.batch,
           productName: i.productName,
+          itemName: i.productName,
           qty: i.issuedQty,
-          unitRate: i.unitRate,
-          amount: i.totalAmount,
+          unitRate: Math.round((i.unitRate || 0) * 100) / 100,
+          amount: Math.round((i.totalAmount || 0) * 100) / 100,
           batchNo: i.batchNo || "-",
           expiryDate: i.batch?.expiry,
           hsnCode: i.product?.hsnCode || "-"
-        });
-      });
-
-      // Update to latest date if needed
-      if (new Date(iss.issuedAt) > new Date(group.createdAt)) {
-        group.createdAt = iss.issuedAt;
-      }
+        })),
+        createdBy: iss.issuedBy,
+        doctorName: (iss.admission as any)?.primaryDoctor?.user?.name || "IPD Admission",
+        isIPD: true,
+        patientType: "IPD",
+        admissionId: iss.admissionId,
+        admission: iss.admission?._id || iss.admission
+      };
     });
 
-    const mappedIpd = Array.from(groupedIpdMap.values()).map((group: any) => {
-      if (group.status === "PAID") {
-        group.paid = group.netPayable;
-        group.balance = 0;
-      } else {
-        group.paid = 0;
-        group.balance = group.netPayable;
-      }
-      return group;
+    const mappedInvoices = invoices.map((inv: any) => {
+      const hasDoctorOrder = Boolean(inv.orderId || (inv.notes && /PHARMA-\d+/i.test(inv.notes)));
+      const prescriptionSource = inv.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
+
+      return {
+        ...inv,
+        prescriptionSource,
+        patientType: inv.patientType || (isWalkInQuery ? "Walk-in" : (inv.isIPD ? "IPD" : "OPD")),
+        isIPD: isWalkInQuery ? false : (inv.isIPD || inv.patientType === "IPD"),
+        isWalkIn: isWalkInQuery || Boolean(inv.isWalkIn)
+      };
     });
 
-    const mappedInvoices = invoices.map((inv: any) => ({
-      ...inv,
-      patientType: inv.patientType || (inv.isIPD ? "IPD" : "OPD"),
-      isIPD: inv.isIPD || inv.patientType === "IPD"
-    }));
+    let paginatedRecords: any[] = [];
+    let total = 0;
 
-    // Merge and sort
-    const allRecords = (filterType === "OPD" ? mappedInvoices : filterType === "IPD" ? mappedIpd : [...mappedInvoices, ...mappedIpd]).sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-
-    const total = filterType === "OPD"
-      ? totalInvoices
-      : filterType === "IPD"
-      ? mappedIpd.length
-      : totalInvoices + mappedIpd.length;
-
-    const paginatedRecords = filterType === "IPD"
-      ? mappedIpd.slice(skip, skip + Number(limit))
-      : allRecords.slice(0, Number(limit));
+    if (isWalkInQuery || isOpdQuery) {
+      // Pure PharmaInvoice: already sorted, skipped, and limited via MongoDB
+      paginatedRecords = mappedInvoices;
+      total = totalInvoices;
+    } else if (isIpdQuery) {
+      // Merge IPD invoices with IPD medicine issuances
+      const allIpd = [...mappedInvoices, ...mappedIpd].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      total = allIpd.length;
+      paginatedRecords = allIpd.slice(skip, skip + Number(limit));
+    } else {
+      // Hospital / ALL: Merge hospital invoices with IPD medicine issuances
+      const allRecords = [...mappedInvoices, ...mappedIpd].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      total = allRecords.length;
+      paginatedRecords = allRecords.slice(skip, skip + Number(limit));
+    }
 
     // Resolve MRNs and Honorifics for pharmacy records
     const isMongoId = (val?: string) => typeof val === "string" && /^[0-9a-fA-F]{24}$/.test(val);
@@ -668,14 +730,17 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
 
     let resolvedMrn = req.body.mrn;
     let resolvedHonorific = req.body.honorific;
+    let resolvedPatientId = req.body.patientId || req.body.patient;
     const isMongoIdVal = (val?: string) => typeof val === "string" && /^[0-9a-fA-F]{24}$/.test(val);
-    if (!resolvedMrn || resolvedMrn === "N/A" || isMongoIdVal(resolvedMrn) || !resolvedHonorific) {
+    let pat: any = null;
+
+    if (!resolvedMrn || resolvedMrn === "N/A" || isMongoIdVal(resolvedMrn) || !resolvedHonorific || !resolvedPatientId) {
       if (customerPhone) {
         const cleanPhone = customerPhone.replace(/[^0-9]/g, "").slice(-10);
         const Patient = mongoose.model("Patient");
         const PatientProfile = mongoose.model("PatientProfile");
 
-        const pat: any = await Patient.findOne({
+        pat = await Patient.findOne({
           $or: [
             ...(resolvedMrn && !isMongoIdVal(resolvedMrn) ? [{ mrn: resolvedMrn }] : []),
             { mobile: customerPhone },
@@ -685,6 +750,7 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
           ]
         }).session(session).lean();
         if (pat) {
+          if (!resolvedPatientId) resolvedPatientId = pat._id;
           if (!resolvedMrn && pat.mrn) resolvedMrn = pat.mrn;
           if (!resolvedHonorific && pat.honorific) resolvedHonorific = pat.honorific;
         }
@@ -706,11 +772,48 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
       }
     }
 
+    // Check Walk-in vs Hospital patient
+    const isWalkIn = req.body.isWalkIn || req.body.patientCategory === 'walkin' || req.body.patientType === 'Walk-in' || req.body.patientType === 'WALKIN';
+
+    // Resolve IPD Admission linkage if applicable (only for hospital patients)
+    const isIPDPatient = !isWalkIn && (req.body.patientType === "IPD" || req.body.isIPD || Boolean(req.body.admissionId));
+    let resolvedAdmissionId = isWalkIn ? undefined : req.body.admissionId;
+    let resolvedAdmissionDoc: any = null;
+
+    if (!isWalkIn && (isIPDPatient || resolvedAdmissionId)) {
+      if (resolvedAdmissionId) {
+        resolvedAdmissionDoc = await IPDAdmission.findOne({
+          $or: [
+            ...(mongoose.Types.ObjectId.isValid(resolvedAdmissionId) ? [{ _id: new mongoose.Types.ObjectId(resolvedAdmissionId) }] : []),
+            { admissionId: resolvedAdmissionId }
+          ]
+        }).session(session);
+      } else if (resolvedPatientId) {
+        resolvedAdmissionDoc = await IPDAdmission.findOne({
+          patient: resolvedPatientId,
+          status: { $in: ["Active", "Admitted", "In Treatment", "Discharge Initiated"] }
+        }).sort({ createdAt: -1 }).session(session);
+      }
+      if (resolvedAdmissionDoc) {
+        resolvedAdmissionId = resolvedAdmissionDoc.admissionId;
+        if (!resolvedPatientId) resolvedPatientId = resolvedAdmissionDoc.patient;
+      }
+    }
+
+    const resolvedPrescriptionSource = orderId ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY";
+
     const invoice = await PharmaInvoice.create(
       [
         {
           ...req.body,
-          mrn: resolvedMrn || req.body.mrn || "N/A",
+          patient: isWalkIn ? undefined : (resolvedPatientId || pat?._id || undefined),
+          patientType: isWalkIn ? "Walk-in" : (isIPDPatient ? "IPD" : (req.body.patientType || "OPD")),
+          isIPD: isWalkIn ? false : Boolean(isIPDPatient),
+          isWalkIn: Boolean(isWalkIn),
+          admission: isWalkIn ? undefined : (resolvedAdmissionDoc?._id || undefined),
+          admissionId: isWalkIn ? undefined : (resolvedAdmissionId || undefined),
+          appointmentId: isWalkIn ? undefined : (req.body.appointmentId || undefined),
+          mrn: isWalkIn ? "N/A" : (resolvedMrn || req.body.mrn || "N/A"),
           honorific: resolvedHonorific || req.body.honorific || "",
           invoiceNo,
           items: processedItems,
@@ -722,6 +825,8 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
           pharmacy: pharmacyId,
           hospital: hospitalId,
           createdBy: userId,
+          prescriptionSource: resolvedPrescriptionSource,
+          orderId: orderId || undefined,
           status,
           mode,
           paid: status === "PAID" ? netPayable : (paymentSummary?.paidAmount || 0),
@@ -730,6 +835,62 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
       ],
       { session },
     );
+
+    // If linked to an active IPD admission, sync into IPDExtraCharge with detailed medicine items
+    if (!isWalkIn && resolvedAdmissionDoc) {
+      const IPDExtraCharge = (await import("../../IPD/Models/IPDExtraCharge.js")).default;
+      await IPDExtraCharge.create(
+        [
+          {
+            patient: resolvedAdmissionDoc.patient,
+            admission: resolvedAdmissionDoc._id,
+            hospital: hospitalId,
+            category: "Pharmacy",
+            description: `Pharmacy Bill (${invoiceNo})`,
+            amount: invoice[0].netPayable,
+            medicines: processedItems.map(it => ({
+              medicineName: it.productName,
+              rate: it.unitRate || it.mrp || 0,
+              quantity: it.qty,
+              amount: it.amount,
+              batchNo: it.batchNo,
+              expiryDate: it.expiryDate
+            })),
+            isPharmaOrder: true,
+            prescriptionSource: resolvedPrescriptionSource,
+            orderId: orderId || undefined,
+            date: new Date(),
+            addedBy: userId,
+            status: "Active"
+          }
+        ],
+        { session }
+      );
+
+      // If counter payment was made, record in IPDAdvancePayment so frontdesk billing immediately tracks it
+      if (invoice[0].paid > 0) {
+        const IPDAdvancePayment = (await import("../../IPD/Models/IPDAdvancePayment.js")).default;
+        await IPDAdvancePayment.create(
+          [
+            {
+              patient: resolvedAdmissionDoc.patient,
+              admission: resolvedAdmissionDoc._id,
+              hospital: hospitalId,
+              amount: invoice[0].paid,
+              mode: mode.toUpperCase() === "MIXED" ? "Mixed" : (mode.toUpperCase() === "UPI" ? "UPI" : (mode.toUpperCase() === "CARD" ? "Card" : "Cash")),
+              paymentDetails: paymentDetails || {},
+              reference: invoiceNo,
+              receiptNumber: invoiceNo,
+              transactionType: "Advance",
+              date: new Date(),
+              receivedBy: userId,
+              notes: `Paid at Pharmacy Counter (${invoiceNo})`
+            }
+          ],
+          { session }
+        );
+      }
+    }
 
     // Global Revenue Transaction
     if (invoice[0].paid > 0) {
@@ -743,6 +904,8 @@ export const createInvoice = async (req: PharmaRequest, res: Response) => {
             status: "completed",
             paymentMode: mode.toLowerCase(),
             referenceId: invoice[0]._id,
+            receiptNumber: invoiceNo,
+            invoiceNumber: invoiceNo,
             date: new Date(),
           },
         ],
@@ -1146,34 +1309,382 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
       doctorName,
       mrn,
       honorific,
+      mode,
+      status,
+      paid,
+      balance,
+      items,
+      subTotal,
+      taxTotal,
+      netPayable,
+      paymentDetails,
     } = req.body;
 
-    const invoice = await PharmaInvoice.findById(id);
+    let invoice = await PharmaInvoice.findById(id);
+    let ipdIssuance: any = null;
+
     if (!invoice) {
-      return res.status(404).json({ success: false, message: "Invoice not found" });
+      ipdIssuance = await IPDMedicineIssuance.findById(id);
+    }
+    if (!invoice && !ipdIssuance) {
+      invoice = await PharmaInvoice.findOne({ invoiceNo: id });
+      if (!invoice) {
+        ipdIssuance = await IPDMedicineIssuance.findOne({ invoiceNo: id });
+      }
     }
 
-    if (patientName !== undefined) invoice.patientName = String(patientName).trim();
-    if (customerPhone !== undefined) invoice.customerPhone = String(customerPhone).trim();
-    if (patientAddress !== undefined) invoice.patientAddress = String(patientAddress).trim();
-    if (patientType !== undefined) invoice.patientType = String(patientType).trim();
-    if (doctorName !== undefined) invoice.doctorName = String(doctorName).trim();
-    if (mrn !== undefined) invoice.mrn = String(mrn).trim();
-    if (honorific !== undefined) invoice.honorific = String(honorific).trim();
-
-    invoice.isEdited = true;
-    invoice.editedAt = new Date();
-    if (req.user?._id) {
-      invoice.editedBy = req.user._id;
+    if (!invoice && !ipdIssuance) {
+      return res.status(404).json({ success: false, message: "Invoice / Bill record not found" });
     }
 
-    await invoice.save();
+    if (invoice) {
+      if (patientName !== undefined) invoice.patientName = String(patientName).trim();
+      if (customerPhone !== undefined) invoice.customerPhone = String(customerPhone).trim();
+      if (patientAddress !== undefined) invoice.patientAddress = String(patientAddress).trim();
+      if (patientType !== undefined) invoice.patientType = String(patientType).trim();
+      if (doctorName !== undefined) invoice.doctorName = String(doctorName).trim();
+      if (mrn !== undefined) invoice.mrn = String(mrn).trim();
+      if (honorific !== undefined) invoice.honorific = String(honorific).trim();
 
-    return res.json({
-      success: true,
-      message: "Patient details updated successfully",
-      data: invoice,
-    });
+      // Payment Details
+      if (mode !== undefined) invoice.mode = mode.toUpperCase() as any;
+      if (status !== undefined) invoice.status = status.toUpperCase() as any;
+      if (paymentDetails !== undefined) invoice.paymentDetails = paymentDetails;
+
+      // Medicine Line Items
+      if (Array.isArray(items) && items.length > 0) {
+        invoice.items = items.map((it: any) => ({
+          drug: it.drug || it.productId || it._id,
+          batch: it.batch,
+          batchNo: it.batchNo || it.batch || "",
+          expiryDate: it.expiryDate || it.expiry || "",
+          productName: it.productName || it.itemName || it.name || it.medicineName || it.brandName || it.brand || "",
+          qty: Number(it.qty || 1),
+          freeQty: Number(it.freeQty || 0),
+          unitRate: Number(it.unitRate || it.rate || it.mrp || 0),
+          mrp: Number(it.mrp || it.unitRate || 0),
+          discountType: it.discountType || "PERCENTAGE",
+          discountValue: Number(it.discountValue || 0),
+          gstPct: Number(it.gstPct || it.gst || 0),
+          hsnCode: it.hsnCode || "",
+          amount: Number(it.amount || ((it.qty || 1) * (it.unitRate || it.rate || 0)))
+        }));
+
+        const calculatedSubTotal = subTotal !== undefined ? Number(subTotal) : invoice.items.reduce((sum, it) => sum + it.amount, 0);
+        invoice.subTotal = calculatedSubTotal;
+        if (taxTotal !== undefined) invoice.taxTotal = Number(taxTotal);
+        invoice.netPayable = netPayable !== undefined ? Number(netPayable) : Math.round(calculatedSubTotal + (invoice.taxTotal || 0));
+
+        if (status === "PAID" || invoice.status === "PAID") {
+          invoice.paid = invoice.netPayable;
+          invoice.balance = 0;
+        } else if (paid !== undefined) {
+          invoice.paid = Number(paid);
+          invoice.balance = Math.max(0, invoice.netPayable - Number(paid));
+        } else {
+          invoice.balance = invoice.netPayable;
+          invoice.paid = 0;
+        }
+      } else {
+        if (status === "PAID") {
+          invoice.paid = invoice.netPayable;
+          invoice.balance = 0;
+        } else if (paid !== undefined) {
+          invoice.paid = Number(paid);
+          if (balance !== undefined) {
+            invoice.balance = Number(balance);
+          } else {
+            invoice.balance = Math.max(0, (invoice.netPayable || 0) - Number(paid));
+          }
+        }
+      }
+
+      invoice.isEdited = true;
+      invoice.editedAt = new Date();
+      if (req.user?._id) {
+        invoice.editedBy = req.user._id;
+      }
+
+      await invoice.save();
+
+      // Financial Transaction Sync (Hospital Admin and Frontdesk Reports)
+      const Transaction = mongoose.model("Transaction");
+      if (invoice.status === "PAID" && invoice.paid > 0) {
+        await Transaction.findOneAndUpdate(
+          {
+            $or: [
+              { invoiceId: invoice._id },
+              { invoiceNumber: invoice.invoiceNo },
+              { referenceId: invoice._id }
+            ]
+          },
+          {
+            $set: {
+              source: "PHARMACY",
+              type: "pharmacy",
+              patientName: invoice.patientName,
+              customerPhone: invoice.customerPhone,
+              amount: invoice.paid,
+              paymentMode: invoice.mode,
+              status: "completed",
+              date: invoice.createdAt || new Date(),
+              hospital: invoice.hospital,
+              invoiceId: invoice._id,
+              invoiceNumber: invoice.invoiceNo,
+              updatedAt: new Date()
+            }
+          },
+          { upsert: true, new: true }
+        );
+      } else if (invoice.status === "PENDING" || invoice.paid === 0) {
+        await Transaction.deleteOne({
+          $or: [
+            { invoiceId: invoice._id },
+            { invoiceNumber: invoice.invoiceNo },
+            { referenceId: invoice._id }
+          ]
+        });
+      }
+
+      // If linked to IPD admission, update IPDAdvancePayment and IPDExtraCharge
+      if (invoice.isIPD || invoice.admission) {
+        const IPDExtraCharge = mongoose.model("IPDExtraCharge");
+        const IPDAdvancePayment = mongoose.model("IPDAdvancePayment");
+
+        const admDoc = await IPDAdmission.findOne({
+          $or: [
+            ...(invoice.admission && mongoose.Types.ObjectId.isValid(invoice.admission) ? [{ _id: invoice.admission }] : []),
+            ...(invoice.admissionId ? [{ admissionId: invoice.admissionId }] : [])
+          ]
+        });
+
+        // Sync Advance Payment at Frontdesk
+        if (admDoc) {
+          if (invoice.status === "PAID" && invoice.paid > 0) {
+            await IPDAdvancePayment.findOneAndUpdate(
+              {
+                admission: admDoc._id,
+                reference: invoice.invoiceNo
+              },
+              {
+                $set: {
+                  patient: admDoc.patient,
+                  admission: admDoc._id,
+                  hospital: invoice.hospital || admDoc.hospital,
+                  amount: invoice.paid,
+                  mode: invoice.mode === "MIXED" ? "Mixed" : (invoice.mode === "UPI" ? "UPI" : (invoice.mode === "CARD" ? "Card" : "Cash")),
+                  paymentDetails: invoice.paymentDetails || {},
+                  reference: invoice.invoiceNo,
+                  receiptNumber: invoice.invoiceNo,
+                  transactionType: "Advance",
+                  date: invoice.createdAt || new Date(),
+                  receivedBy: req.user?._id || invoice.createdBy,
+                  notes: `Paid at Pharmacy Counter (${invoice.invoiceNo})`
+                }
+              },
+              { upsert: true, new: true }
+            );
+          } else {
+            await IPDAdvancePayment.deleteOne({
+              admission: admDoc._id,
+              reference: invoice.invoiceNo
+            });
+          }
+        }
+
+        // Sync Extra Charges
+        await IPDExtraCharge.findOneAndUpdate(
+          {
+            $or: [
+              { description: { $regex: invoice.invoiceNo, $options: "i" } },
+              { invoiceId: invoice._id }
+            ]
+          },
+          {
+            $set: {
+              amount: invoice.netPayable,
+              medicines: invoice.items.map((it: any) => ({
+                medicineName: it.productName,
+                rate: it.unitRate,
+                quantity: it.qty,
+                amount: it.amount,
+                batchNo: it.batchNo,
+                expiryDate: it.expiryDate
+              }))
+            }
+          }
+        );
+      }
+
+      return res.json({
+        success: true,
+        message: "Invoice and financial details updated successfully",
+        data: invoice,
+      });
+    }
+
+    if (ipdIssuance) {
+      if (patientName !== undefined) ipdIssuance.patientName = String(patientName).trim();
+      if (customerPhone !== undefined) ipdIssuance.customerPhone = String(customerPhone).trim();
+      if (status !== undefined) {
+        ipdIssuance.status = status === "PAID" ? "CLOSED" : "ISSUED";
+      }
+      if (mode !== undefined) ipdIssuance.mode = mode.toUpperCase();
+      if (paid !== undefined) ipdIssuance.paid = Number(paid);
+      if (balance !== undefined) ipdIssuance.balance = Number(balance);
+      if (paymentDetails !== undefined) ipdIssuance.paymentDetails = paymentDetails;
+
+      if (Array.isArray(items) && items.length > 0) {
+        const existingItems = ipdIssuance.items || [];
+        ipdIssuance.items = items.map((it: any, idx: number) => {
+          const existingItem = existingItems[idx] || existingItems.find((ex: any) => 
+            (ex.productName && it.productName && ex.productName.toLowerCase() === it.productName.toLowerCase())
+          );
+
+          const rawProduct = it.drug || it.productId || it.product || existingItem?.product;
+          const validProduct = (rawProduct && mongoose.Types.ObjectId.isValid(rawProduct)) ? new mongoose.Types.ObjectId(rawProduct) : undefined;
+
+          const rawBatch = it.batch || it.batchId || existingItem?.batch;
+          const validBatch = (rawBatch && mongoose.Types.ObjectId.isValid(rawBatch)) ? new mongoose.Types.ObjectId(rawBatch) : undefined;
+
+          const qty = Number(it.qty || it.issuedQty || 1);
+          const rate = Number(it.unitRate || it.rate || 0);
+          const totalAmt = Number(it.amount !== undefined ? it.amount : (qty * rate));
+
+          return {
+            product: (validProduct || new mongoose.Types.ObjectId()) as any,
+            batch: (validBatch || new mongoose.Types.ObjectId()) as any,
+            productName: it.productName || it.itemName || it.name || it.medicineName || existingItem?.productName || "",
+            batchNo: (it.batchNo || it.batch || existingItem?.batchNo || "").toString(),
+            issuedQty: qty,
+            returnedQty: Number(it.returnedQty || existingItem?.returnedQty || 0),
+            unitRate: Math.round(rate * 100) / 100,
+            totalAmount: Math.round(totalAmt * 100) / 100,
+            frequency: it.frequency || existingItem?.frequency,
+          };
+        });
+        ipdIssuance.totalAmount = ipdIssuance.items.reduce((s: number, i: any) => s + (i.totalAmount || 0), 0);
+      }
+      ipdIssuance.updatedAt = new Date();
+      await ipdIssuance.save();
+
+      const admDoc = await IPDAdmission.findOne({
+        $or: [
+          ...(ipdIssuance.admission && mongoose.Types.ObjectId.isValid(ipdIssuance.admission) ? [{ _id: ipdIssuance.admission }] : []),
+          ...(ipdIssuance.admissionId ? [{ admissionId: ipdIssuance.admissionId }] : [])
+        ]
+      });
+
+      const Transaction = mongoose.model("Transaction");
+      const IPDAdvancePayment = mongoose.model("IPDAdvancePayment");
+      const IPDExtraCharge = mongoose.model("IPDExtraCharge");
+
+      const invNo = ipdIssuance.invoiceNo || ipdIssuance.admissionId;
+      const isPaid = status === "PAID" || ipdIssuance.status === "CLOSED";
+      const paidAmt = Number(paid !== undefined ? paid : (isPaid ? ipdIssuance.totalAmount : 0));
+
+      if (isPaid && paidAmt > 0) {
+        // Upsert Financial Transaction
+        await Transaction.findOneAndUpdate(
+          {
+            $or: [
+              { invoiceNumber: invNo },
+              { referenceId: ipdIssuance._id }
+            ]
+          },
+          {
+            $set: {
+              source: "PHARMACY",
+              type: "pharmacy",
+              patientName: ipdIssuance.patientName,
+              customerPhone: ipdIssuance.customerPhone,
+              amount: paidAmt,
+              paymentMode: (mode || ipdIssuance.mode || "CASH").toUpperCase(),
+              status: "completed",
+              date: ipdIssuance.issuedAt || new Date(),
+              hospital: ipdIssuance.hospital,
+              invoiceNumber: invNo,
+              referenceId: ipdIssuance._id,
+              updatedAt: new Date()
+            }
+          },
+          { upsert: true, new: true }
+        );
+
+        // Upsert IPDAdvancePayment so Frontdesk transaction reports and IPDBillingModal immediately see it as a counter payment
+        if (admDoc) {
+          await IPDAdvancePayment.findOneAndUpdate(
+            {
+              admission: admDoc._id,
+              reference: invNo
+            },
+            {
+              $set: {
+                patient: admDoc.patient,
+                admission: admDoc._id,
+                hospital: ipdIssuance.hospital || admDoc.hospital,
+                amount: paidAmt,
+                mode: (mode || "CASH").toUpperCase() === "MIXED" ? "Mixed" : ((mode || "CASH").toUpperCase() === "UPI" ? "UPI" : ((mode || "CASH").toUpperCase() === "CARD" ? "Card" : "Cash")),
+                paymentDetails: paymentDetails || {},
+                reference: invNo,
+                receiptNumber: invNo,
+                transactionType: "Advance",
+                date: ipdIssuance.issuedAt || new Date(),
+                receivedBy: req.user?._id || ipdIssuance.issuedBy,
+                notes: `Paid at Pharmacy Counter (${invNo})`
+              }
+            },
+            { upsert: true, new: true }
+          );
+        }
+      } else {
+        // Remove Transaction and IPDAdvancePayment if marked as PENDING / UNPAID
+        await Transaction.deleteOne({
+          $or: [
+            { invoiceNumber: invNo },
+            { referenceId: ipdIssuance._id }
+          ]
+        });
+
+        if (admDoc) {
+          await IPDAdvancePayment.deleteOne({
+            admission: admDoc._id,
+            reference: invNo
+          });
+        }
+      }
+
+      // Update IPDExtraCharge so medicine charges in Frontdesk match updated items
+      if (admDoc) {
+        await IPDExtraCharge.findOneAndUpdate(
+          {
+            admission: admDoc._id,
+            $or: [
+              { description: { $regex: invNo, $options: "i" } },
+              { _id: ipdIssuance._id }
+            ]
+          },
+          {
+            $set: {
+              amount: ipdIssuance.totalAmount,
+              medicines: (ipdIssuance.items || []).map((it: any) => ({
+                medicineName: it.productName,
+                rate: it.unitRate,
+                quantity: it.issuedQty,
+                amount: it.totalAmount,
+                batchNo: it.batchNo
+              }))
+            }
+          }
+        );
+      }
+
+      return res.json({
+        success: true,
+        message: "IPD Issuance details and Frontdesk payments synchronized successfully",
+        data: ipdIssuance,
+      });
+    }
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }
