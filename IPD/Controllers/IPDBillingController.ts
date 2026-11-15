@@ -416,15 +416,48 @@ export const calculateBillBreakdown = async (admissionId: string) => {
   });
 
   // 2e. Aggregate Pharma Invoices linked to this admission
+  // Query by direct admission reference, or smart auto-link for IPD transferred/created invoices during the stay
+  const rawMobile = String(patientObj?.mobile || profile?.contactNumber || "");
+  const patientPhone = rawMobile.replace(/[^0-9]/g, "").slice(-10);
+
+  const admissionEnd = admission.dischargeDate ? new Date(new Date(admission.dischargeDate).getTime() + 86400000) : null;
+
+  const invoiceOrConditions: any[] = [
+    { admission: admission._id },
+    { admissionId: admission.admissionId },
+  ];
+
+  if (patientPhone || admission.patient) {
+    const timeCondition: any = { createdAt: { $gte: admissionStart } };
+    if (admissionEnd) {
+      timeCondition.createdAt.$lte = admissionEnd;
+    }
+
+    const patientMatchConditions: any[] = [];
+    if (admission.patient) {
+      patientMatchConditions.push({ patient: admission.patient });
+      patientMatchConditions.push({ patientId: admission.patient });
+    }
+    if (patientPhone) {
+      patientMatchConditions.push({ customerPhone: { $regex: patientPhone + "$" } });
+    }
+
+    invoiceOrConditions.push({
+      hospital: admission.hospital,
+      $or: patientMatchConditions,
+      $and: [
+        { $or: [{ patientType: "IPD" }, { isIPD: true }] },
+        timeCondition,
+      ],
+    });
+  }
+
   const linkedInvoices = await PharmaInvoice.find({
-    $or: [
-      { admission: admission._id },
-      { admissionId: admission.admissionId },
-    ],
+    $or: invoiceOrConditions,
   }).lean();
 
   linkedInvoices.forEach((inv: any) => {
-    const amount = inv.netPayable || inv.paid || 0;
+    const amount = inv.netPayable ?? inv.paid ?? inv.finalAmount ?? inv.total ?? 0;
     if (amount > 0) {
       const detailedMedicines = (inv.items || []).map((m: any) => ({
         medicineName: m.productName,
@@ -520,14 +553,18 @@ export const calculateBillBreakdown = async (admissionId: string) => {
       );
 
       if (!exists) {
+        const matchingInv = linkedInvoices.find((inv: any) => inv._id.toString() === txRefStr);
+        const resolvedRef = matchingInv?.invoiceNo || tx.receiptNumber || tx.invoiceNumber || tx.transactionId;
         const virtualPayment = {
           _id: tx._id,
           amount: tx.amount,
           mode: tx.paymentMode || "Other",
           transactionType: "Advance", // Treat as payment towards bill
           date: tx.date || tx.createdAt,
-          reference: tx.receiptNumber || tx.invoiceNumber || tx.transactionId,
-          description: tx.type === "pharmacy" ? "Pharmacy Payment (Counter)" : "Lab Payment (Counter)",
+          reference: resolvedRef,
+          receiptNumber: tx.receiptNumber || resolvedRef,
+          description: matchingInv ? `Pharmacy Payment (Counter - ${matchingInv.invoiceNo})` : (tx.type === "pharmacy" ? "Pharmacy Payment (Counter)" : "Lab Payment (Counter)"),
+          notes: matchingInv ? `Paid at Pharmacy Counter (${matchingInv.invoiceNo})` : undefined,
           isExternal: true,
         };
         (advances as any).push(virtualPayment);
