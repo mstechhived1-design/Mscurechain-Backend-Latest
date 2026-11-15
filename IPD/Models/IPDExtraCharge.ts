@@ -31,6 +31,8 @@ const ipdExtraChargeSchema = new Schema<IIPDExtraCharge>(
     reversalReason: { type: String },
     isMerged: { type: Boolean, default: false },
     mergedFrom: { type: [Schema.Types.Mixed], default: undefined },
+    medicines: { type: [Schema.Types.Mixed], default: undefined },
+    isPharmaOrder: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

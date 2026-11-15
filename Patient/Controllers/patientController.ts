@@ -297,73 +297,98 @@ export const searchPatients = async (req: Request, res: Response) => {
     }
 
     const patients = await Patient.find(searchFilter)
-      .select("_id name mobile email age ageUnit gender address")
+      .select("_id name mobile email age ageUnit gender address honorific")
       .limit(10)
       .lean();
 
     const patientIds = patients.map(p => p._id);
 
-    // Fetch MRN and Address from PatientProfiles
-    const profiles = await PatientProfile.find({
-      user: { $in: patientIds }
-    }).select("user mrn address").lean();
+    // Fetch MRN, Honorific, and Address from PatientProfiles (scoped to hospital if available)
+    const profileFilter: any = { user: { $in: patientIds } };
+    if (hospitalId) {
+      profileFilter.hospital = hospitalId;
+    }
+    const profiles = await PatientProfile.find(profileFilter)
+      .select("user mrn address honorific contactNumber")
+      .lean();
 
     const mrnMap = new Map();
     const addressMap = new Map();
+    const honorificMap = new Map();
+    const contactMap = new Map();
     for (const prof of profiles) {
       if (prof.user) {
-        mrnMap.set(prof.user.toString(), prof.mrn);
-        if (prof.address) {
-          addressMap.set(prof.user.toString(), prof.address);
-        }
+        const uId = prof.user.toString();
+        if (prof.mrn) mrnMap.set(uId, prof.mrn);
+        if (prof.address) addressMap.set(uId, prof.address);
+        if (prof.honorific) honorificMap.set(uId, prof.honorific);
+        if (prof.contactNumber) contactMap.set(uId, prof.contactNumber);
       }
     }
 
-    // Check active IPD admissions with doctor info
-    const activeAdmissions = await IPDAdmission.find({
+    // Check active IPD admissions with doctor & admission info
+    const admissionFilter: any = {
       patient: { $in: patientIds },
-      status: "Active"
-    }).select("patient primaryDoctor").populate({
-      path: "primaryDoctor",
-      select: "user",
-      populate: { path: "user", select: "name" }
-    }).lean();
+      status: { $in: ["Active", "Admitted", "In Treatment", "Discharge Initiated"] }
+    };
+    if (hospitalId) {
+      admissionFilter.hospital = hospitalId;
+    }
+
+    const activeAdmissions = await IPDAdmission.find(admissionFilter)
+      .select("patient admissionId primaryDoctor status")
+      .populate({
+        path: "primaryDoctor",
+        select: "user",
+        populate: { path: "user", select: "name" }
+      })
+      .sort({ createdAt: -1 })
+      .lean();
 
     const ipdMap = new Map<string, string>();
     const doctorMap = new Map<string, string>();
+    const admissionIdMap = new Map<string, string>();
     for (const adm of activeAdmissions) {
       const pid = adm.patient.toString();
-      ipdMap.set(pid, "IPD");
-      const doc = adm.primaryDoctor as any;
-      if (doc?.user?.name) {
-        doctorMap.set(pid, doc.user.name);
+      if (!ipdMap.has(pid)) {
+        ipdMap.set(pid, "IPD");
+        if (adm.admissionId) admissionIdMap.set(pid, adm.admissionId);
+        const doc = adm.primaryDoctor as any;
+        if (doc?.user?.name) {
+          doctorMap.set(pid, doc.user.name);
+        }
       }
     }
 
-    // For OPD patients, fetch latest appointment with doctor
+    // For OPD patients, fetch latest appointment with doctor and appointmentId
+    const appointmentIdMap = new Map<string, string>();
     const opdPatientIds = patientIds.filter(id => !ipdMap.has(id.toString()));
     if (opdPatientIds.length > 0) {
-      const latestAppointments = await Appointment.aggregate([
-        { $match: { patient: { $in: opdPatientIds } } },
-        { $sort: { date: -1 } },
-        { $group: { _id: "$patient", doctor: { $first: "$doctor" } } }
-      ]);
+      const apptFilter: any = { patient: { $in: opdPatientIds } };
+      if (hospitalId) {
+        apptFilter.hospital = hospitalId;
+      }
 
-      if (latestAppointments.length > 0) {
-        const DoctorProfile = (await import("../../Doctor/Models/DoctorProfile.js")).default;
-        const doctorIds = latestAppointments.map(a => a.doctor).filter(Boolean);
-        const doctors = await DoctorProfile.find({ _id: { $in: doctorIds } })
-          .select("_id user")
-          .populate("user", "name")
-          .lean();
-        const docProfileMap = new Map();
-        for (const d of doctors) {
-          docProfileMap.set(d._id.toString(), (d.user as any)?.name || "");
-        }
-        for (const appt of latestAppointments) {
-          if (appt.doctor) {
-            const docName = docProfileMap.get(appt.doctor.toString());
-            if (docName) doctorMap.set(appt._id.toString(), docName);
+      const appointments = await Appointment.find(apptFilter)
+        .select("patient doctor appointmentId date createdAt")
+        .sort({ date: -1, createdAt: -1 })
+        .populate({
+          path: "doctor",
+          select: "user",
+          populate: { path: "user", select: "name" }
+        })
+        .lean();
+
+      for (const appt of appointments) {
+        if (!appt.patient) continue;
+        const pid = appt.patient.toString();
+        if (!doctorMap.has(pid)) {
+          const doc = appt.doctor as any;
+          if (doc?.user?.name) {
+            doctorMap.set(pid, doc.user.name);
+          }
+          if (appt.appointmentId) {
+            appointmentIdMap.set(pid, appt.appointmentId);
           }
         }
       }
@@ -373,10 +398,14 @@ export const searchPatients = async (req: Request, res: Response) => {
       const patientIdStr = p._id.toString();
       return {
         ...p,
+        honorific: p.honorific || honorificMap.get(patientIdStr) || "",
+        mobile: p.mobile || contactMap.get(patientIdStr) || "",
         address: p.address || addressMap.get(patientIdStr) || "",
         mrn: mrnMap.get(patientIdStr) || "N/A",
         patientType: ipdMap.has(patientIdStr) ? "IPD" : "OPD",
         doctorName: doctorMap.get(patientIdStr) || "",
+        admissionId: admissionIdMap.get(patientIdStr) || undefined,
+        appointmentId: appointmentIdMap.get(patientIdStr) || undefined,
       };
     });
 

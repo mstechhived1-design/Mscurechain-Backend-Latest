@@ -306,26 +306,25 @@ export const getPatientPrescriptions = async (req: Request, res: Response) => {
 
     let pharmaInvoices: any[] = [];
     try {
-      let invoiceQuery: any = null;
-      if (mrns.length > 0) {
-        invoiceQuery = { mrn: { $in: mrns } };
-      } else if (userName && userMobile) {
-        invoiceQuery = {
-          customerPhone: userMobile,
-          patientName: new RegExp(`^${userName.trim()}$`, "i"),
-        };
-      } else if (userMobile) {
-        invoiceQuery = { customerPhone: userMobile };
+      const orConditions: any[] = [{ patient: userId }];
+      if (mrns.length > 0) orConditions.push({ mrn: { $in: mrns } });
+      if (userMobile) {
+        const clean10 = userMobile.replace(/[^0-9]/g, "").slice(-10);
+        orConditions.push({ customerPhone: userMobile });
+        if (clean10) {
+          orConditions.push({ customerPhone: clean10 });
+          orConditions.push({ customerPhone: `91${clean10}` });
+          orConditions.push({ customerPhone: `+91${clean10}` });
+        }
       }
+      const invoiceQuery = { $or: orConditions };
 
-      if (invoiceQuery) {
-        pharmaInvoices = await (PharmaInvoice.find(invoiceQuery) as any)
-          .unscoped()
-          .populate("hospital", "name address logo city")
-          .sort({ createdAt: -1 })
-          .limit(50)
-          .lean();
-      }
+      pharmaInvoices = await (PharmaInvoice.find(invoiceQuery) as any)
+        .unscoped()
+        .populate("hospital", "name address logo city")
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean();
     } catch (e) {
       console.warn("[getPatientPrescriptions] Invoice find warning:", e);
     }
@@ -1094,27 +1093,25 @@ export const getPatientDashboardData = async (req: Request, res: Response) => {
 
     let pharmaInvoices: any[] = [];
     try {
-      let invoiceQuery: any = null;
-      if (patMrns.length > 0) {
-        invoiceQuery = { mrn: { $in: patMrns }, ...(hospitalFilter || {}) };
-      } else if (userName && userMobile) {
-        invoiceQuery = {
-          customerPhone: userMobile,
-          patientName: new RegExp(`^${userName.trim()}$`, "i"),
-          ...(hospitalFilter || {}),
-        };
-      } else if (userMobile) {
-        invoiceQuery = { customerPhone: userMobile, ...(hospitalFilter || {}) };
+      const orConditions: any[] = [{ patient: userId }];
+      if (patMrns.length > 0) orConditions.push({ mrn: { $in: patMrns } });
+      if (userMobile) {
+        const clean10 = userMobile.replace(/[^0-9]/g, "").slice(-10);
+        orConditions.push({ customerPhone: userMobile });
+        if (clean10) {
+          orConditions.push({ customerPhone: clean10 });
+          orConditions.push({ customerPhone: `91${clean10}` });
+          orConditions.push({ customerPhone: `+91${clean10}` });
+        }
       }
+      const invoiceQuery = { $or: orConditions, ...(hospitalFilter || {}) };
 
-      if (invoiceQuery) {
-        pharmaInvoices = await (PharmaInvoice.find(invoiceQuery) as any)
-          .unscoped()
-          .populate("hospital", "name address logo")
-          .sort({ createdAt: -1 })
-          .limit(20)
-          .lean();
-      }
+      pharmaInvoices = await (PharmaInvoice.find(invoiceQuery) as any)
+        .unscoped()
+        .populate("hospital", "name address logo")
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .lean();
     } catch (e) {
       console.warn("[getPatientDashboardData] Invoice find warning:", e);
     }

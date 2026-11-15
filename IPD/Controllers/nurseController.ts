@@ -940,10 +940,41 @@ export const getPrescriptionsByAdmissionId = asyncHandler(
       return found ? { quantity: totalIssued - totalReturned - totalPendingReturn } : null;
     };
 
+    // 3b. Fetch Direct IPD Pharma Invoices (counter billed or linked to admission)
+    const PharmaInvoiceModel = (
+      await import("../../Pharmacy/Models/Invoice.js")
+    ).default;
+    const directInvoices = await PharmaInvoiceModel.find({
+      $or: [
+        { admission: admission._id },
+        { admissionId: admission.admissionId },
+      ],
+      hospital: hospitalId,
+    }).lean();
+
+    const mappedInvoices = directInvoices.map((inv: any) => ({
+      ...inv,
+      diagnosis: `Pharmacy Invoice #${inv.invoiceNo}`,
+      medicines: (inv.items || []).map((m: any) => ({
+        ...m,
+        productId: m.drug,
+        name: m.productName,
+        dosage: m.batchNo ? `Batch: ${m.batchNo}` : "-",
+        frequency: "1-1-1",
+        quantity: m.qty || 1,
+        consumedCount: getAdministeredCount(m.productName, m.drug?.toString()),
+        status: inv.status?.toLowerCase() === "paid" ? "dispensed" : "pending",
+        isPharmaTracked: true,
+      })),
+      createdAt: inv.createdAt,
+      type: "pharma-invoice",
+    }));
+
     const mergedPrescs = [
       ...prescriptions,
       ...mappedOrders,
       ...mappedIssuances,
+      ...mappedInvoices,
     ].sort(
       (a: any, b: any) =>
         new Date(b.createdAt || b.timestamp).getTime() -
