@@ -171,14 +171,20 @@ export async function buildIPDFinalBillPayload(patientId: string, hospitalId: st
 
       if (item.isPharmaOrder || item.category === "Pharmacy" || item.category === "Medicine" ||
         (typeof desc === "string" && (desc.toLowerCase().includes("pharmacy") || desc.toLowerCase().includes("medicine")))) {
-        if (item.medicines && Array.isArray(item.medicines) && item.medicines.length > 0) {
+        const isPharmaInvoiceBill = typeof desc === "string" && (desc.includes("Pharmacy Bill") || desc.includes("Pharmacy Invoice"));
+
+        if (!isPharmaInvoiceBill && item.medicines && Array.isArray(item.medicines) && item.medicines.length > 0) {
           item.medicines.forEach((m: any, mIdx: number) => {
             const rawMedName = typeof m === "string" ? m : (m?.medicineName || m?.name || "Medicine");
             const actualMedName = typeof rawMedName === "object" ? (rawMedName.medicineName || rawMedName.name || "Medicine") : (String(rawMedName).trim() === "[object Object]" ? "Medicine" : String(rawMedName).trim());
             reportData.meds.push({ code: `MED${codeSuffix}_${mIdx + 1}`, date: m?.date || m?.createdAt || itemTimestamp, medicineName: actualMedName, rate: Number(m?.rate ?? 0), quantity: Number(m?.quantity ?? 1), amount: Number(m?.amount ?? 0) });
           });
         } else {
-          const actualDesc = typeof desc === "object" ? (desc.medicineName || desc.name || "Medicine") : (String(desc).trim() === "[object Object]" ? "Medicine" : String(desc).trim());
+          const itemsCount = (item.medicines && Array.isArray(item.medicines)) ? item.medicines.length : 0;
+          let actualDesc = typeof desc === "object" ? (desc.medicineName || desc.name || "Medicine") : (String(desc).trim() === "[object Object]" ? "Medicine" : String(desc).trim());
+          if (isPharmaInvoiceBill && itemsCount > 0 && !actualDesc.includes('item(s)')) {
+            actualDesc = `${actualDesc} - ${itemsCount} item(s)`;
+          }
           reportData.meds.push({ code: `MED${codeSuffix}`, date: itemTimestamp, medicineName: actualDesc, rate: amount, quantity: 1, amount });
         }
         return;
