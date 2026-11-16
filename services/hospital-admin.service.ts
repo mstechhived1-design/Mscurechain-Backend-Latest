@@ -1655,8 +1655,28 @@ export class HospitalAdminService {
                 priority: { $literal: 1 },
                 // 🗓️ NORMALIZED SORT KEY: Lab — order creation time is when billing happens
                 sortDate: { $ifNull: ["$createdAt", "$updatedAt"] },
+                sampleId: "$sampleId",
                 transactionId: { $ifNull: ["$sampleId", "$tokenNumber", "—"] },
-                receiptNumber: { $ifNull: ["$sampleId", "$tokenNumber", "—"] },
+                receiptNumber: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$transactionLookup.receiptNumber", 0] },
+                    { $arrayElemAt: ["$transactionLookup.invoiceNumber", 0] },
+                    "$receiptNo",
+                    "$receiptNumber",
+                    "$sampleId",
+                    "—"
+                  ]
+                },
+                receiptNo: {
+                  $ifNull: [
+                    { $arrayElemAt: ["$transactionLookup.receiptNumber", 0] },
+                    { $arrayElemAt: ["$transactionLookup.invoiceNumber", 0] },
+                    "$receiptNo",
+                    "$receiptNumber",
+                    "$sampleId",
+                    "—"
+                  ]
+                },
               },
             },
             // Since tests array could be empty, handle empty string case for reason
@@ -1676,8 +1696,8 @@ export class HospitalAdminService {
       });
     }
 
-    // --- MANUAL ENTRIES FROM TRANSACTION REPORTS ---
-    if (showAll || isIpdAll || isOpdAll || isLabAll || isDischargeOnly || isDefault) {
+    // --- MANUAL ENTRIES FROM TRANSACTION REPORTS (Disabled: prevents duplicate synthetic transactions and fake MANUAL_DIAGS/MEDS entries from saved snapshot reports)
+    if (false as boolean) {
       // Manual Payments
       pipeline.push({
         $unionWith: {
