@@ -416,10 +416,7 @@ export const calculateBillBreakdown = async (admissionId: string) => {
   });
 
   // 2e. Aggregate Pharma Invoices linked to this admission
-  // Query by direct admission reference, or smart auto-link for IPD transferred/created invoices during the stay
-  const rawMobile = String(patientObj?.mobile || profile?.contactNumber || "");
-  const patientPhone = rawMobile.replace(/[^0-9]/g, "").slice(-10);
-
+  // Query strictly by direct admission reference or unassigned IPD invoices for this exact patient during the stay
   const admissionEnd = admission.dischargeDate ? new Date(new Date(admission.dischargeDate).getTime() + 86400000) : null;
 
   const invoiceOrConditions: any[] = [
@@ -427,20 +424,16 @@ export const calculateBillBreakdown = async (admissionId: string) => {
     { admissionId: admission.admissionId },
   ];
 
-  if (patientPhone || admission.patient) {
+  if (admission.patient) {
     const timeCondition: any = { createdAt: { $gte: admissionStart } };
     if (admissionEnd) {
       timeCondition.createdAt.$lte = admissionEnd;
     }
 
-    const patientMatchConditions: any[] = [];
-    if (admission.patient) {
-      patientMatchConditions.push({ patient: admission.patient });
-      patientMatchConditions.push({ patientId: admission.patient });
-    }
-    if (patientPhone) {
-      patientMatchConditions.push({ customerPhone: { $regex: patientPhone + "$" } });
-    }
+    const patientMatchConditions: any[] = [
+      { patient: admission.patient },
+      { patientId: admission.patient },
+    ];
 
     invoiceOrConditions.push({
       hospital: admission.hospital,
@@ -448,13 +441,40 @@ export const calculateBillBreakdown = async (admissionId: string) => {
       $and: [
         { $or: [{ patientType: "IPD" }, { isIPD: true }] },
         timeCondition,
+        {
+          $or: [
+            { admission: null },
+            { admission: admission._id },
+            { admissionId: null },
+            { admissionId: "" },
+            { admissionId: admission.admissionId },
+          ],
+        },
       ],
     });
   }
 
-  const linkedInvoices = await PharmaInvoice.find({
+  const rawInvoices = await PharmaInvoice.find({
     $or: invoiceOrConditions,
   }).lean();
+
+  // Strict isolation: Never attach invoices that belong to another admission or another patient
+  const targetPatientIdStr = (admission.patient?._id || admission.patient).toString();
+  const linkedInvoices = rawInvoices.filter((inv: any) => {
+    if (inv.admission && inv.admission.toString() !== admission._id.toString()) {
+      return false;
+    }
+    if (inv.admissionId && inv.admissionId !== admission.admissionId) {
+      return false;
+    }
+    if (inv.patient && inv.patient.toString() !== targetPatientIdStr) {
+      return false;
+    }
+    if (inv.patientId && inv.patientId.toString() !== targetPatientIdStr) {
+      return false;
+    }
+    return true;
+  });
 
   linkedInvoices.forEach((inv: any) => {
     const amount = inv.netPayable ?? inv.paid ?? inv.finalAmount ?? inv.total ?? 0;
@@ -747,9 +767,17 @@ export const calculateBillBreakdown = async (admissionId: string) => {
       balance,
       returnCredits: totalReturnCredit,
     },
-    advances: advances.sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-    ),
+    advances: advances
+      .map((a: any) => {
+        const doc = a && a.toObject ? a.toObject() : { ...(a || {}) };
+        return {
+          ...doc,
+          reference: doc.reference || doc.receiptNumber || doc.transactionId || doc.receiptNo,
+          receiptNumber: doc.receiptNumber || doc.reference || doc.transactionId || doc.receiptNo,
+          receiptNo: doc.receiptNumber || doc.reference || doc.transactionId || doc.receiptNo,
+        };
+      })
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
     isBillLocked: admission.isBillLocked,
     billLockedAt: admission.billLockedAt,
     status: admission.status,
