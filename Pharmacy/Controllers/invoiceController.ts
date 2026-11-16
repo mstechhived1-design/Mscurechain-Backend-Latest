@@ -154,131 +154,171 @@ export const getInvoices = async (req: PharmaRequest, res: Response) => {
 
     const shouldFetchIpdIssuance = isIpdQuery || isHospitalQuery || isAllQuery;
 
-    const [totalInvoices, invoices, ipdIssuances] = await Promise.all([
-      PharmaInvoice.countDocuments(matchStage),
-      PharmaInvoice.find(matchStage)
-        .sort({ createdAt: -1 })
-        .skip(isWalkInQuery || isOpdQuery ? skip : 0)
-        .limit(isWalkInQuery || isOpdQuery ? Number(limit) : 1000)
-        .populate("createdBy", "name email role")
-        .populate("items.batch", "batchNo expiry")
-        .populate("patient", "name honorific mobile")
-        .lean(),
-      !shouldFetchIpdIssuance ? Promise.resolve([]) : IPDMedicineIssuance.find(ipdMatchStage)
-        .sort({ issuedAt: -1 })
-        // Note: For aggregation to work correctly with pagination, 
-        // we fetch all relevant for now or handle via pipeline.
-        // Assuming reasonably small set for current patient context.
-        .populate("patient", "name honorific mobile")
-        .populate("issuedBy", "name email")
-        .populate("items.batch", "expiry")
-        .populate("items.product", "hsnCode")
-        .populate({
-          path: "admission",
-          select: "primaryDoctor paymentStatus status",
-          populate: {
-            path: "primaryDoctor",
-            select: "user",
-            populate: {
-              path: "user",
-              select: "name"
-            }
-          }
-        })
-        .lean(),
-    ]);
-
-    // Map individual IPD Issuances (Each issuance is its own separate transaction & invoice)
-    const mappedIpd = ipdIssuances.map((iss: any) => {
-      const pName = (iss.patient as any)?.honorific
-        ? `${(iss.patient as any).honorific} ${(iss.patient as any).name}`
-        : ((iss.patient as any)?.name || iss.patientName || "IPD Patient");
-
-      const isDischarged = (iss.admission as any)?.status === "Discharged" || iss.status === "CLOSED";
-      const isPaid = iss.status === "CLOSED" || (iss.paid !== undefined && iss.paid > 0 && iss.paid >= iss.totalAmount) || isDischarged;
-      const netPayable = Math.round((iss.totalAmount || 0) * 100) / 100;
-      const paid = iss.paid !== undefined ? Math.round(Number(iss.paid) * 100) / 100 : (isPaid ? netPayable : 0);
-      const balance = Math.round(Math.max(0, netPayable - paid) * 100) / 100;
-
-      const hasDoctorOrder = Boolean(iss.orderId || (iss.notes && /PHARMA-\d+/i.test(iss.notes)));
-      const prescriptionSource = iss.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
-
-      return {
-        _id: iss._id,
-        invoiceNo: iss.invoiceNo || `ISS-${iss._id.toString().slice(-6).toUpperCase()}`,
-        patientName: pName,
-        customerPhone: (iss.patient as any)?.mobile || iss.customerPhone || "-",
-        netPayable,
-        subTotal: netPayable,
-        taxTotal: 0,
-        discountTotal: 0,
-        paid,
-        balance,
-        status: isPaid ? "PAID" : "CHARGED TO IPD",
-        mode: iss.mode || (isPaid ? "CASH" : "IPD BILLING"),
-        createdAt: iss.issuedAt || iss.createdAt,
-        updatedAt: iss.updatedAt,
-        prescriptionSource,
-        orderId: iss.orderId,
-        notes: iss.notes,
-        items: (iss.items || []).map((i: any) => ({
-          product: i.product,
-          productId: i.product,
-          drug: i.product,
-          batch: i.batch,
-          batchId: i.batch,
-          productName: i.productName,
-          itemName: i.productName,
-          qty: i.issuedQty,
-          unitRate: Math.round((i.unitRate || 0) * 100) / 100,
-          amount: Math.round((i.totalAmount || 0) * 100) / 100,
-          batchNo: i.batchNo || "-",
-          expiryDate: i.batch?.expiry,
-          hsnCode: i.product?.hsnCode || "-"
-        })),
-        createdBy: iss.issuedBy,
-        doctorName: (iss.admission as any)?.primaryDoctor?.user?.name || "IPD Admission",
-        isIPD: true,
-        patientType: "IPD",
-        admissionId: iss.admissionId,
-        admission: iss.admission?._id || iss.admission
-      };
-    });
-
-    const mappedInvoices = invoices.map((inv: any) => {
-      const hasDoctorOrder = Boolean(inv.orderId || (inv.notes && /PHARMA-\d+/i.test(inv.notes)));
-      const prescriptionSource = inv.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
-
-      return {
-        ...inv,
-        prescriptionSource,
-        patientType: inv.patientType || (isWalkInQuery ? "Walk-in" : (inv.isIPD ? "IPD" : "OPD")),
-        isIPD: isWalkInQuery ? false : (inv.isIPD || inv.patientType === "IPD"),
-        isWalkIn: isWalkInQuery || Boolean(inv.isWalkIn)
-      };
-    });
-
     let paginatedRecords: any[] = [];
     let total = 0;
 
     if (isWalkInQuery || isOpdQuery) {
-      // Pure PharmaInvoice: already sorted, skipped, and limited via MongoDB
-      paginatedRecords = mappedInvoices;
+      // Pure PharmaInvoice query: skip and limit directly at MongoDB level
+      const [totalInvoices, invoices] = await Promise.all([
+        PharmaInvoice.countDocuments(matchStage),
+        PharmaInvoice.find(matchStage)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(Number(limit))
+          .populate("createdBy", "name email role")
+          .populate("items.batch", "batchNo expiry")
+          .populate("patient", "name honorific mobile")
+          .lean()
+      ]);
+
       total = totalInvoices;
-    } else if (isIpdQuery) {
-      // Merge IPD invoices with IPD medicine issuances
-      const allIpd = [...mappedInvoices, ...mappedIpd].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      total = allIpd.length;
-      paginatedRecords = allIpd.slice(skip, skip + Number(limit));
+      paginatedRecords = invoices.map((inv: any) => {
+        const hasDoctorOrder = Boolean(inv.orderId || (inv.notes && /PHARMA-\d+/i.test(inv.notes)));
+        const prescriptionSource = inv.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
+
+        return {
+          ...inv,
+          prescriptionSource,
+          patientType: inv.patientType || (isWalkInQuery ? "Walk-in" : (inv.isIPD ? "IPD" : "OPD")),
+          isIPD: isWalkInQuery ? false : (inv.isIPD || inv.patientType === "IPD"),
+          isWalkIn: isWalkInQuery || Boolean(inv.isWalkIn)
+        };
+      });
     } else {
-      // Hospital / ALL: Merge hospital invoices with IPD medicine issuances
-      const allRecords = [...mappedInvoices, ...mappedIpd].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-      );
-      total = allRecords.length;
-      paginatedRecords = allRecords.slice(skip, skip + Number(limit));
+      // Combined Hospital/IPD/All Query:
+      // High-performance 2-step pagination:
+      // 1. Fetch lightweight IDs and timestamps to quickly determine total count and exact page slice
+      const [invoicesLight, issuancesLight] = await Promise.all([
+        PharmaInvoice.find(matchStage).select("_id createdAt").lean(),
+        !shouldFetchIpdIssuance
+          ? Promise.resolve([])
+          : IPDMedicineIssuance.find(ipdMatchStage).select("_id issuedAt createdAt").lean()
+      ]);
+
+      const allSortedRefs = [
+        ...invoicesLight.map((i: any) => ({
+          _id: i._id,
+          date: new Date(i.createdAt).getTime(),
+          type: "invoice" as const
+        })),
+        ...issuancesLight.map((i: any) => ({
+          _id: i._id,
+          date: new Date(i.issuedAt || i.createdAt).getTime(),
+          type: "issuance" as const
+        }))
+      ].sort((a, b) => b.date - a.date);
+
+      total = allSortedRefs.length;
+      const pageSlice = allSortedRefs.slice(skip, skip + Number(limit));
+
+      const targetInvoiceIds = pageSlice.filter(x => x.type === "invoice").map(x => x._id);
+      const targetIssuanceIds = pageSlice.filter(x => x.type === "issuance").map(x => x._id);
+
+      // 2. Fetch and deeply populate ONLY the items for the current page (at most limit, default 10)
+      const [pageInvoices, pageIssuances] = await Promise.all([
+        targetInvoiceIds.length === 0
+          ? Promise.resolve([])
+          : PharmaInvoice.find({ _id: { $in: targetInvoiceIds } })
+              .populate("createdBy", "name email role")
+              .populate("items.batch", "batchNo expiry")
+              .populate("patient", "name honorific mobile")
+              .lean(),
+        targetIssuanceIds.length === 0
+          ? Promise.resolve([])
+          : IPDMedicineIssuance.find({ _id: { $in: targetIssuanceIds } })
+              .populate("patient", "name honorific mobile")
+              .populate("issuedBy", "name email")
+              .populate("items.batch", "expiry")
+              .populate("items.product", "hsnCode")
+              .populate({
+                path: "admission",
+                select: "primaryDoctor paymentStatus status",
+                populate: {
+                  path: "primaryDoctor",
+                  select: "user",
+                  populate: {
+                    path: "user",
+                    select: "name"
+                  }
+                }
+              })
+              .lean()
+      ]);
+
+      const invoiceMap = new Map<string, any>();
+      pageInvoices.forEach((inv: any) => {
+        const hasDoctorOrder = Boolean(inv.orderId || (inv.notes && /PHARMA-\d+/i.test(inv.notes)));
+        const prescriptionSource = inv.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
+        invoiceMap.set(inv._id.toString(), {
+          ...inv,
+          prescriptionSource,
+          patientType: inv.patientType || (inv.isIPD ? "IPD" : "OPD"),
+          isIPD: inv.isIPD || inv.patientType === "IPD",
+          isWalkIn: Boolean(inv.isWalkIn)
+        });
+      });
+
+      const issuanceMap = new Map<string, any>();
+      pageIssuances.forEach((iss: any) => {
+        const pName = (iss.patient as any)?.honorific
+          ? `${(iss.patient as any).honorific} ${(iss.patient as any).name}`
+          : ((iss.patient as any)?.name || iss.patientName || "IPD Patient");
+
+        const isDischarged = (iss.admission as any)?.status === "Discharged" || iss.status === "CLOSED";
+        const isPaid = iss.status === "CLOSED" || (iss.paid !== undefined && iss.paid > 0 && iss.paid >= iss.totalAmount) || isDischarged;
+        const netPayable = Math.round((iss.totalAmount || 0) * 100) / 100;
+        const paid = iss.paid !== undefined ? Math.round(Number(iss.paid) * 100) / 100 : (isPaid ? netPayable : 0);
+        const balance = Math.round(Math.max(0, netPayable - paid) * 100) / 100;
+
+        const hasDoctorOrder = Boolean(iss.orderId || (iss.notes && /PHARMA-\d+/i.test(iss.notes)));
+        const prescriptionSource = iss.prescriptionSource || (hasDoctorOrder ? "DOCTOR_DIGITAL" : "DIRECT_PHARMACY");
+
+        issuanceMap.set(iss._id.toString(), {
+          _id: iss._id,
+          invoiceNo: iss.invoiceNo || `ISS-${iss._id.toString().slice(-6).toUpperCase()}`,
+          patientName: pName,
+          customerPhone: (iss.patient as any)?.mobile || iss.customerPhone || "-",
+          netPayable,
+          subTotal: netPayable,
+          taxTotal: 0,
+          discountTotal: 0,
+          paid,
+          balance,
+          status: isPaid ? "PAID" : "CHARGED TO IPD",
+          mode: iss.mode || (isPaid ? "CASH" : "IPD BILLING"),
+          createdAt: iss.issuedAt || iss.createdAt,
+          updatedAt: iss.updatedAt,
+          prescriptionSource,
+          orderId: iss.orderId,
+          notes: iss.notes,
+          items: (iss.items || []).map((i: any) => ({
+            product: i.product,
+            productId: i.product,
+            drug: i.product,
+            batch: i.batch,
+            batchId: i.batch,
+            productName: i.productName,
+            itemName: i.productName,
+            qty: i.issuedQty,
+            unitRate: Math.round((i.unitRate || 0) * 100) / 100,
+            amount: Math.round((i.totalAmount || 0) * 100) / 100,
+            batchNo: i.batchNo || "-",
+            expiryDate: i.batch?.expiry,
+            hsnCode: i.product?.hsnCode || "-"
+          })),
+          createdBy: iss.issuedBy,
+          doctorName: (iss.admission as any)?.primaryDoctor?.user?.name || "IPD Admission",
+          isIPD: true,
+          patientType: "IPD",
+          admissionId: iss.admissionId,
+          admission: iss.admission?._id || iss.admission
+        });
+      });
+
+      // Preserve exact chronological order of the page
+      paginatedRecords = pageSlice
+        .map(ref => (ref.type === "invoice" ? invoiceMap.get(ref._id.toString()) : issuanceMap.get(ref._id.toString())))
+        .filter(Boolean);
     }
 
     // Resolve MRNs and Honorifics for pharmacy records
