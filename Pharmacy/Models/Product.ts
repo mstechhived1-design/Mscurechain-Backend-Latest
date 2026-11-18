@@ -7,7 +7,9 @@ export interface IProduct extends Document {
   brand: string;
   form: string;
   strength: string;
-  schedule: "H" | "H1" | "X" | "OTC";
+  schedule: string;
+  images?: string[];
+  image?: string;
   gstPercent: number;
   hsnCode?: string;
   batchNumber?: string;
@@ -62,8 +64,16 @@ const productSchema = new Schema<IProduct>(
     },
     schedule: {
       type: String,
-      enum: ["H", "H1", "X", "OTC"],
+      trim: true,
       default: "OTC",
+    },
+    images: {
+      type: [String],
+      default: [],
+    },
+    image: {
+      type: String,
+      trim: true,
     },
     gstPercent: {
       type: Number,

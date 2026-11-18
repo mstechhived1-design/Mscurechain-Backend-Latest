@@ -168,13 +168,22 @@ export const createProduct = async (req: PharmaRequest, res: Response) => {
       }
     }
 
+    const rawImages = rest.images || rest.image;
+    const images = Array.isArray(rawImages)
+      ? rawImages
+      : (typeof rawImages === 'string' && rawImages.trim()
+        ? rawImages.split(',').map((u: string) => u.trim()).filter(Boolean)
+        : []);
+
     const productData = {
       brand: rest.brand || rest.brandName,
       generic: rest.generic || rest.genericName,
       sku: rest.sku,
-      form: rest.form,
+      form: rest.form ? String(rest.form).trim() : "TABLET",
       strength: rest.strength,
-      schedule: rest.schedule,
+      schedule: rest.schedule ? String(rest.schedule).trim() : "OTC",
+      images,
+      image: images[0] || "",
       gstPercent: rest.gstPercent !== undefined ? Number(rest.gstPercent) : (rest.gst !== undefined ? Number(rest.gst) : 12),
       hsnCode: rest.hsnCode,
       minStock: rest.minStock || rest.minStockLevel || 10,
@@ -250,6 +259,8 @@ export const updateProduct = async (req: PharmaRequest, res: Response) => {
     // Map aliases
     if (rest.brandName) updateData.brand = rest.brandName;
     if (rest.genericName) updateData.generic = rest.genericName;
+    if (rest.form !== undefined) updateData.form = String(rest.form).trim();
+    if (rest.schedule !== undefined) updateData.schedule = String(rest.schedule).trim();
     if (rest.currentStock !== undefined) updateData.stock = rest.currentStock;
     if (rest.minStockLevel !== undefined)
       updateData.minStock = rest.minStockLevel;
@@ -257,6 +268,16 @@ export const updateProduct = async (req: PharmaRequest, res: Response) => {
       updateData.gstPercent = Number(rest.gst);
     } else if (rest.gstPercent !== undefined) {
       updateData.gstPercent = Number(rest.gstPercent);
+    }
+
+    if (rest.images !== undefined) {
+      updateData.images = Array.isArray(rest.images) ? rest.images : (rest.images ? [rest.images] : []);
+      updateData.image = updateData.images[0] || "";
+    } else if (rest.image !== undefined) {
+      updateData.image = rest.image;
+      if (!updateData.images || updateData.images.length === 0) {
+        updateData.images = rest.image ? [rest.image] : [];
+      }
     }
 
     // Find existing to compute new name if brand/strength/form changes
@@ -381,47 +402,16 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
   let errorCount = 0;
   const errors: any[] = [];
 
-  // Helper to normalize schedule
-  const normalizeSchedule = (val: string): any => {
-    if (!val) return "OTC";
-    const v = val.toUpperCase();
-    if (v.includes("H1")) return "H1";
-    if (v.includes("X")) return "X";
-    if (v.startsWith("H") || v.includes("PRESCRIPTION")) return "H";
-    return "OTC";
+  // Helper to normalize schedule (supports custom words inserted by pharma)
+  const normalizeSchedule = (val: string): string => {
+    if (!val || !String(val).trim()) return "OTC";
+    return String(val).trim();
   };
 
-  // Helper to normalize form
-  const normalizeForm = (val: string): any => {
-    const validForms = [
-      "TAB",
-      "CAP",
-      "SYR",
-      "INJ",
-      "CRM",
-      "ONT",
-      "DRP",
-      "PWD",
-      "SR TAB",
-      "SR CAP",
-      "TABLET",
-      "CAPSULE",
-      "SYRUP",
-      "INJECTION",
-      "CREAM",
-      "DROPS",
-      "SUSPENSION",
-      "SUSP",
-    ];
-    if (!val) return "TABLET";
-    const v = val.toUpperCase().trim();
-    if (validForms.includes(v)) return v;
-    // Check partial matches or variations
-    if (v.includes("TAB")) return "TABLET";
-    if (v.includes("CAP")) return "CAPSULE";
-    if (v.includes("SYR")) return "SYRUP";
-    if (v.includes("INJ")) return "INJECTION";
-    return "TABLET";
+  // Helper to normalize form (supports custom words inserted by pharma)
+  const normalizeForm = (val: string): string => {
+    if (!val || !String(val).trim()) return "TABLET";
+    return String(val).trim().toUpperCase();
   };
 
   try {
@@ -520,6 +510,16 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
           ) as any).unscoped();
           // Update local stock
           product.stock = (product.stock || 0) + stockToAdd;
+
+          const rawImagesExist = (item as any).images || (item as any).image;
+          const imagesExist = Array.isArray(rawImagesExist)
+            ? rawImagesExist
+            : (typeof rawImagesExist === 'string' && rawImagesExist.trim()
+              ? rawImagesExist.split(',').map((u: string) => u.trim()).filter(Boolean)
+              : []);
+          if (imagesExist.length > 0 && (!product.images || product.images.length === 0)) {
+            await (Product.updateOne({ _id: product._id }, { images: imagesExist, image: imagesExist[0] }) as any).unscoped();
+          }
         } else {
           // New product -> CREATE
           let supplierId: any = undefined;
@@ -532,6 +532,13 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
             }
           }
 
+          const rawImages = (item as any).images || (item as any).image;
+          const images = Array.isArray(rawImages)
+            ? rawImages
+            : (typeof rawImages === 'string' && rawImages.trim()
+              ? rawImages.split(',').map((u: string) => u.trim()).filter(Boolean)
+              : []);
+
           const productData = {
             brand: brand.trim(),
             generic: generic.trim(),
@@ -539,6 +546,8 @@ export const bulkCreateProducts = async (req: PharmaRequest, res: Response) => {
             strength: normalizedStrength,
             form: normalizedForm,
             schedule: normalizeSchedule(item.schedule),
+            images,
+            image: images[0] || "",
             mrp: Number(item.mrp) || 0,
             gstPercent: Number(item.gst) || Number(item.gstPercent) || 12,
             hsnCode: item.hsnCode?.trim() || undefined,

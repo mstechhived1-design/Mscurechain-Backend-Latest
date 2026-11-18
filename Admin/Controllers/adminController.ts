@@ -2417,7 +2417,7 @@ export const getTransactions = async (req: Request, res: Response) => {
 export const editTransaction = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { type, paymentMode, reason, referenceId, paymentDetails } = req.body;
+    const { type, paymentMode, reason, referenceId, paymentDetails, date, createdAt } = req.body;
     const user = (req as any).user;
     
     // dynamically import models to avoid circular dependencies if any
@@ -2436,6 +2436,13 @@ export const editTransaction = async (req: Request, res: Response) => {
     const rawMode = String(paymentMode || 'cash').trim();
     const lowerMode = rawMode.toLowerCase();
     const userId = user?._id || user?.id || null;
+
+    const billDateRaw = date || createdAt;
+    let newDate: Date | null = null;
+    if (billDateRaw) {
+      const parsed = new Date(billDateRaw);
+      if (!isNaN(parsed.getTime())) newDate = parsed;
+    }
 
     const hospitalObjId = mongoose.Types.ObjectId.isValid(hospitalId) ? new mongoose.Types.ObjectId(hospitalId) : null;
     const hospitalMatch = hospitalObjId ? { $in: [hospitalObjId, String(hospitalId)] } : hospitalId;
@@ -2509,6 +2516,10 @@ export const editTransaction = async (req: Request, res: Response) => {
           apt.payment.paymentDetails = paymentDetails;
           apt.paymentDetails = paymentDetails;
         }
+        if (newDate) {
+          apt.createdAt = newDate;
+          if (apt.appointmentDate) apt.appointmentDate = newDate;
+        }
         apt.isEdited = true;
         apt.editReason = editReason;
         apt.editedAt = new Date();
@@ -2560,6 +2571,10 @@ export const editTransaction = async (req: Request, res: Response) => {
             bankTransfer: Number(paymentDetails.bankTransfer || 0),
           };
         }
+        if (newDate) {
+          ipdAdv.date = newDate;
+          ipdAdv.createdAt = newDate;
+        }
         ipdAdv.isEdited = true;
         ipdAdv.editReason = editReason;
         ipdAdv.editedAt = new Date();
@@ -2598,6 +2613,10 @@ export const editTransaction = async (req: Request, res: Response) => {
             upi: Number(paymentDetails.upi || 0),
           };
         }
+        if (newDate) {
+          inv.createdAt = newDate;
+          (inv as any).date = newDate;
+        }
         inv.isEdited = true;
         inv.editReason = editReason;
         inv.editedAt = new Date();
@@ -2615,6 +2634,10 @@ export const editTransaction = async (req: Request, res: Response) => {
         baseTx.paymentMode = lowerMode;
         if (lowerMode === "mixed" && paymentDetails) {
           baseTx.paymentDetails = paymentDetails;
+        }
+        if (newDate) {
+          baseTx.date = newDate;
+          baseTx.createdAt = newDate;
         }
         baseTx.isEdited = true;
         baseTx.editReason = editReason;
