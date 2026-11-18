@@ -1358,6 +1358,9 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
       taxTotal,
       netPayable,
       paymentDetails,
+      date,
+      createdAt,
+      invoiceDate,
     } = req.body;
 
     let invoice = await PharmaInvoice.findById(id);
@@ -1385,6 +1388,17 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
       if (doctorName !== undefined) invoice.doctorName = String(doctorName).trim();
       if (mrn !== undefined) invoice.mrn = String(mrn).trim();
       if (honorific !== undefined) invoice.honorific = String(honorific).trim();
+
+      const billDateRaw = date || createdAt || invoiceDate;
+      let newBillDate: Date | null = null;
+      if (billDateRaw) {
+        const parsed = new Date(billDateRaw);
+        if (!isNaN(parsed.getTime())) {
+          newBillDate = parsed;
+          invoice.createdAt = parsed;
+          (invoice as any).date = parsed;
+        }
+      }
 
       // Payment Details
       if (mode !== undefined) invoice.mode = mode.toUpperCase() as any;
@@ -1450,36 +1464,44 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
       // Financial Transaction Sync (Hospital Admin and Frontdesk Reports)
       const Transaction = mongoose.model("Transaction");
       if (invoice.status === "PAID" && invoice.paid > 0) {
+        const rawMode = (invoice.mode || "CASH").toLowerCase();
+        const validPaymentMode = ["cash", "upi", "card", "mixed"].includes(rawMode) ? rawMode : "other";
+
         await Transaction.findOneAndUpdate(
           {
             $or: [
-              { invoiceId: invoice._id },
               { invoiceNumber: invoice.invoiceNo },
               { referenceId: invoice._id }
             ]
           },
           {
             $set: {
+              user: invoice.createdBy || req.user?._id || (invoice as any).user,
+              userModel: "User",
               source: "PHARMACY",
               type: "pharmacy",
               patientName: invoice.patientName,
+              originalPatientName: invoice.patientName,
               customerPhone: invoice.customerPhone,
               amount: invoice.paid,
-              paymentMode: invoice.mode,
+              paidAmount: invoice.paid,
+              paymentMode: validPaymentMode,
               status: "completed",
-              date: invoice.createdAt || new Date(),
+              date: newBillDate || invoice.createdAt || new Date(),
+              createdAt: newBillDate || invoice.createdAt || new Date(),
               hospital: invoice.hospital,
               invoiceId: invoice._id,
+              referenceId: invoice._id,
               invoiceNumber: invoice.invoiceNo,
+              receiptNumber: invoice.invoiceNo,
               updatedAt: new Date()
             }
           },
-          { upsert: true, new: true }
+          { upsert: true, new: true, strict: false }
         );
       } else if (invoice.status === "PENDING" || invoice.paid === 0) {
         await Transaction.deleteOne({
           $or: [
-            { invoiceId: invoice._id },
             { invoiceNumber: invoice.invoiceNo },
             { referenceId: invoice._id }
           ]
@@ -1517,7 +1539,8 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
                   reference: invoice.invoiceNo,
                   receiptNumber: invoice.invoiceNo,
                   transactionType: "Advance",
-                  date: invoice.createdAt || new Date(),
+                  date: newBillDate || invoice.createdAt || new Date(),
+              createdAt: newBillDate || invoice.createdAt || new Date(),
                   receivedBy: req.user?._id || invoice.createdBy,
                   notes: `Paid at Pharmacy Counter (${invoice.invoiceNo})`
                 }
@@ -1564,6 +1587,16 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
     }
 
     if (ipdIssuance) {
+      const billDateRaw = date || createdAt || invoiceDate;
+      let newBillDate: Date | null = null;
+      if (billDateRaw) {
+        const parsed = new Date(billDateRaw);
+        if (!isNaN(parsed.getTime())) {
+          newBillDate = parsed;
+          ipdIssuance.issuedAt = parsed;
+          ipdIssuance.createdAt = parsed;
+        }
+      }
       if (patientName !== undefined) ipdIssuance.patientName = String(patientName).trim();
       if (customerPhone !== undefined) ipdIssuance.customerPhone = String(customerPhone).trim();
       if (status !== undefined) {
@@ -1625,6 +1658,9 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
 
       if (isPaid && paidAmt > 0) {
         // Upsert Financial Transaction
+        const rawIpdMode = (mode || ipdIssuance.mode || "CASH").toLowerCase();
+        const validIpdPaymentMode = ["cash", "upi", "card", "mixed"].includes(rawIpdMode) ? rawIpdMode : "other";
+
         await Transaction.findOneAndUpdate(
           {
             $or: [
@@ -1634,21 +1670,28 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
           },
           {
             $set: {
+              user: ipdIssuance.issuedBy || req.user?._id || (ipdIssuance as any).user,
+              userModel: "User",
               source: "PHARMACY",
               type: "pharmacy",
               patientName: ipdIssuance.patientName,
+              originalPatientName: ipdIssuance.patientName,
               customerPhone: ipdIssuance.customerPhone,
               amount: paidAmt,
-              paymentMode: (mode || ipdIssuance.mode || "CASH").toUpperCase(),
+              paidAmount: paidAmt,
+              paymentMode: validIpdPaymentMode,
               status: "completed",
-              date: ipdIssuance.issuedAt || new Date(),
+              date: newBillDate || ipdIssuance.issuedAt || new Date(),
+              createdAt: newBillDate || ipdIssuance.createdAt || new Date(),
               hospital: ipdIssuance.hospital,
-              invoiceNumber: invNo,
+              invoiceId: ipdIssuance._id,
               referenceId: ipdIssuance._id,
+              invoiceNumber: invNo,
+              receiptNumber: invNo,
               updatedAt: new Date()
             }
           },
-          { upsert: true, new: true }
+          { upsert: true, new: true, strict: false }
         );
 
         // Upsert IPDAdvancePayment so Frontdesk transaction reports and IPDBillingModal immediately see it as a counter payment
@@ -1669,7 +1712,8 @@ export const updateInvoicePatient = async (req: PharmaRequest, res: Response) =>
                 reference: invNo,
                 receiptNumber: invNo,
                 transactionType: "Advance",
-                date: ipdIssuance.issuedAt || new Date(),
+                date: newBillDate || ipdIssuance.issuedAt || new Date(),
+              createdAt: newBillDate || ipdIssuance.createdAt || new Date(),
                 receivedBy: req.user?._id || ipdIssuance.issuedBy,
                 notes: `Paid at Pharmacy Counter (${invNo})`
               }

@@ -24,6 +24,10 @@ export interface ITransaction extends Document {
   receiptNumber?: string;
   transactionId?: string;
   invoiceNumber?: string;
+  invoiceId?: Types.ObjectId;
+  source?: string;
+  patientName?: string;
+  customerPhone?: string;
   paidAmount?: number;
   balance?: number;
   isEdited?: boolean;
@@ -79,6 +83,10 @@ const transactionSchema = new Schema<ITransaction>({
   receiptNumber: { type: String },
   transactionId: { type: String },
   invoiceNumber: { type: String },
+  invoiceId: { type: mongoose.Schema.Types.ObjectId },
+  source: { type: String },
+  patientName: { type: String },
+  customerPhone: { type: String },
   paidAmount: { type: Number },
   balance: { type: Number },
   isEdited: { type: Boolean, default: false },
