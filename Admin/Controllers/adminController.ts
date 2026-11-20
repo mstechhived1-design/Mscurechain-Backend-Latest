@@ -2359,8 +2359,34 @@ export const getTransactions = async (req: Request, res: Response) => {
         createdAt: t.createdAt || t.date || t.sortDate,
         date: t.date || t.createdAt,
         transactionTime: t.createdAt || t.date || t.sortDate,
-        appointmentTime: t.appointmentTime || t.time || t.startTime || t.referenceId?.appointmentTime || t.referenceId?.time,
-        time: t.time || t.appointmentTime || t.startTime || t.referenceId?.time || t.referenceId?.appointmentTime,
+        appointmentTime: (() => {
+          const direct = t.appointmentTime || t.time || t.startTime || t.referenceId?.appointmentTime || t.referenceId?.time;
+          if (direct && typeof direct === "string" && !direct.includes("undefined")) return direct;
+          const rawDt = t.createdAt || t.date || t.sortDate;
+          if (rawDt) {
+            try {
+              const d = new Date(rawDt);
+              if (!isNaN(d.getTime())) {
+                return d.toLocaleTimeString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
+              }
+            } catch {}
+          }
+          return "";
+        })(),
+        time: (() => {
+          const direct = t.time || t.appointmentTime || t.startTime || t.referenceId?.time || t.referenceId?.appointmentTime;
+          if (direct && typeof direct === "string" && !direct.includes("undefined")) return direct;
+          const rawDt = t.createdAt || t.date || t.sortDate;
+          if (rawDt) {
+            try {
+              const d = new Date(rawDt);
+              if (!isNaN(d.getTime())) {
+                return d.toLocaleTimeString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true });
+              }
+            } catch {}
+          }
+          return "";
+        })(),
         type: t.type?.toUpperCase() || "GENERAL",
         source: t.type?.toLowerCase().includes("ipd")
           ? "IPD"

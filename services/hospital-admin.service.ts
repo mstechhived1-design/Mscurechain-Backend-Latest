@@ -1587,6 +1587,7 @@ export class HospitalAdminService {
                 status: { $literal: "completed" }, // Maps all active lab orders to completed for ledger
                 referenceId: "$_id",
                 date: { $ifNull: ["$createdAt", "$updatedAt"] },
+                createdAt: "$createdAt",
                 admissionId: { $literal: null },
                 tests: 1,
                 paymentDetails: { $arrayElemAt: ["$transactionLookup.paymentDetails", 0] },
@@ -2297,6 +2298,9 @@ export class HospitalAdminService {
                 type: 1,
                 status: 1,
                 date: 1,
+                appointmentTime: 1,
+                time: 1,
+                startTime: 1,
                 paymentMode: 1,
                 paymentDetails: 1,
                 createdAt: 1,
