@@ -7,6 +7,8 @@ import BedOccupancy from "../../IPD/Models/BedOccupancy.js";
 import IPDExtraCharge from "../../IPD/Models/IPDExtraCharge.js";
 import IPDAdvancePayment from "../../IPD/Models/IPDAdvancePayment.js";
 import LabOrder from "../../Lab/Models/LabOrder.js";
+import Transaction from "../../Admin/Models/Transaction.js";
+import { isDateOnlyOrMidnight, isMidnightTimestamp, resolveActualTimestamp } from "../../utils/dateUtils.js";
 
 const cleanString = (val: any, fallback: string = ""): string => {
   if (!val) return fallback;
@@ -175,24 +177,25 @@ const syncAllDatabaseUnderlyingCharges = async (admissionRef: any, patientId: an
       }
     }
 
-    // 4. Sync Payments / Receipts (IPDAdvancePayment)
+    // 4. Sync Payments / Receipts (IPDAdvancePayment) — never overwrite real DB timestamps with date-only or midnight dates
     if (Array.isArray(reportData.payments)) {
       for (const p of reportData.payments) {
-        if (!p.date) continue;
+        if (!p.date || isDateOnlyOrMidnight(p.date)) continue;
         const pDate = new Date(p.date);
-        if (isNaN(pDate.getTime())) continue;
+        if (isNaN(pDate.getTime()) || isMidnightTimestamp(pDate)) continue;
 
+        const refVal = p.receiptNumber || p.receiptNo || p.reference;
         const query: any = {};
-        if (p.receiptNumber || p.receiptNo) {
-          query.receiptNumber = p.receiptNumber || p.receiptNo;
+        if (refVal) {
+          query.$or = [{ receiptNumber: refVal }, { reference: refVal }];
         } else if (admId) {
           query.admission = admId;
         } else if (patientId) {
           query.patient = patientId;
         }
 
-        await (IPDAdvancePayment.updateMany(query, { $set: { date: pDate, createdAt: pDate } }) as any)?.unscoped();
-        console.log(`[SYNC DB] Synced IPDAdvancePayment ${p.receiptNumber} to ${pDate.toISOString()}`);
+        await (IPDAdvancePayment.updateMany(query, { $set: { date: pDate } }) as any)?.unscoped();
+        console.log(`[SYNC DB] Synced IPDAdvancePayment ${refVal || admId || patientId} to ${pDate.toISOString()}`);
       }
     }
   } catch (syncErr) {
@@ -261,6 +264,110 @@ export const saveTransactionReport = async (req: Request, res: Response) => {
   }
 };
 
+const getISTCalendarDate = (d: Date): string =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+
+/**
+ * Restores real payment timestamps (hours/minutes) on saved reports whose
+ * payments[] were previously stored with date-only strings (e.g. "25 Nov 2026")
+ * or midnight dates (00:00:00).
+ */
+const enrichReportsWithPaymentTimestamps = async (reports: any[]): Promise<void> => {
+  if (!Array.isArray(reports) || reports.length === 0) return;
+
+  const refsSet = new Set<string>();
+  for (const r of reports) {
+    const pays = r?.reportData?.payments;
+    if (!Array.isArray(pays)) continue;
+    for (const p of pays) {
+      if (!isDateOnlyOrMidnight(p?.date) && p?.createdAt) continue;
+      const ref = String(p?.receiptNumber || p?.receiptNo || p?.reference || "").trim();
+      if (ref) refsSet.add(ref);
+    }
+  }
+
+  if (refsSet.size === 0) return;
+  const refs = Array.from(refsSet);
+
+  const [txDocs, advDocs] = await Promise.all([
+    (Transaction.find({
+      $or: [
+        { receiptNumber: { $in: refs } },
+        { transactionId: { $in: refs } },
+        { invoiceNumber: { $in: refs } },
+      ],
+    }) as any)
+      ?.unscoped()
+      .select("receiptNumber transactionId invoiceNumber date createdAt amount")
+      .lean(),
+    (IPDAdvancePayment.find({
+      $or: [
+        { receiptNumber: { $in: refs } },
+        { reference: { $in: refs } },
+      ],
+    }) as any)
+      ?.unscoped()
+      .select("receiptNumber reference date createdAt amount")
+      .lean(),
+  ]);
+
+  const byRef = new Map<string, Array<{ ts: Date; createdAt?: Date; amount?: number }>>();
+  const pushRecord = (key: unknown, doc: any) => {
+    const k = String(key || "").trim().toUpperCase();
+    if (!k) return;
+    const ts = resolveActualTimestamp(doc.date, doc.createdAt);
+    if (!ts || isMidnightTimestamp(ts)) return;
+    const list = byRef.get(k) || [];
+    list.push({ ts, createdAt: doc.createdAt || ts, amount: Number(doc.amount || 0) });
+    byRef.set(k, list);
+  };
+
+  for (const adv of advDocs || []) {
+    pushRecord(adv.receiptNumber, adv);
+    if (adv.reference && adv.reference !== adv.receiptNumber) {
+      pushRecord(adv.reference, adv);
+    }
+  }
+  for (const tx of txDocs || []) {
+    pushRecord(tx.receiptNumber, tx);
+    if (tx.transactionId && tx.transactionId !== tx.receiptNumber) pushRecord(tx.transactionId, tx);
+    if (tx.invoiceNumber && tx.invoiceNumber !== tx.receiptNumber) pushRecord(tx.invoiceNumber, tx);
+  }
+
+  for (const r of reports) {
+    const pays = r?.reportData?.payments;
+    if (!Array.isArray(pays)) continue;
+    for (const p of pays) {
+      const ref = String(p?.receiptNumber || p?.receiptNo || p?.reference || "").trim().toUpperCase();
+      if (!ref) continue;
+      const candidates = byRef.get(ref);
+      if (!candidates || candidates.length === 0) continue;
+
+      const pAmt = Number(p?.amount || 0);
+      const pParsed = p?.date ? new Date(p.date) : null;
+      const pHasValidDate = Boolean(pParsed && !isNaN(pParsed.getTime()));
+
+      // Prefer a DB match on the same calendar day (and matching amount if multiple rows share a ref like IPD-...)
+      const match =
+        candidates.find((c) => (!pHasValidDate || getISTCalendarDate(c.ts) === getISTCalendarDate(pParsed!)) && Math.abs((c.amount || 0) - pAmt) < 1) ||
+        candidates.find((c) => !pHasValidDate || getISTCalendarDate(c.ts) === getISTCalendarDate(pParsed!)) ||
+        candidates[0];
+
+      if (match && isDateOnlyOrMidnight(p?.date)) {
+        p.date = match.ts.toISOString();
+      }
+      if (match && !p?.createdAt) {
+        p.createdAt = match.createdAt;
+      }
+    }
+  }
+};
+
 export const getPatientTransactionReports = async (req: Request, res: Response) => {
   try {
     const { patientId } = req.params;
@@ -295,6 +402,7 @@ export const getPatientTransactionReports = async (req: Request, res: Response) 
         reportData: cleanData,
       };
     });
+    await enrichReportsWithPaymentTimestamps(sanitizedReports);
     res.json(sanitizedReports);
   } catch (error: any) {
     console.error("Error fetching patient transaction reports:", error);
@@ -344,6 +452,7 @@ export const getAllTransactionReports = async (req: Request, res: Response) => {
         return r;
     });
 
+    await enrichReportsWithPaymentTimestamps(reportsWithMrn);
     console.log(`[DEBUG] Found ${reportsWithMrn.length} reports for hospital ${hospitalId}`);
     res.json(reportsWithMrn);
   } catch (error: any) {
