@@ -19,6 +19,7 @@ import { generateTransactionId, generateReceiptNumber } from "../../utils/idGene
 import { formatPatientDisplayName } from "../../utils/identityResolver.js";
 import PatientProfile from "../../Patient/Models/PatientProfile.js";
 import User from "../../Auth/Models/User.js";
+import { resolveActualTimestamp } from "../../utils/dateUtils.js";
 
 // Helper to calculate total bill breakdown
 export const calculateBillBreakdown = async (admissionId: string) => {
@@ -770,8 +771,10 @@ export const calculateBillBreakdown = async (admissionId: string) => {
     advances: advances
       .map((a: any) => {
         const doc = a && a.toObject ? a.toObject() : { ...(a || {}) };
+        const resolvedTs = resolveActualTimestamp(doc.date, doc.createdAt);
         return {
           ...doc,
+          date: resolvedTs || doc.date || doc.createdAt,
           reference: doc.reference || doc.receiptNumber || doc.transactionId || doc.receiptNo,
           receiptNumber: doc.receiptNumber || doc.reference || doc.transactionId || doc.receiptNo,
           receiptNo: doc.receiptNumber || doc.reference || doc.transactionId || doc.receiptNo,

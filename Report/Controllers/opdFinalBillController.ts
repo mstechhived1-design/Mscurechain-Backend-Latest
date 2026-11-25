@@ -8,6 +8,7 @@ import PatientProfile from "../../Patient/Models/PatientProfile.js";
 import Hospital from "../../Hospital/Models/Hospital.js";
 import Transaction from "../../Admin/Models/Transaction.js";
 import "../../Pharmacy/Models/Invoice.js";
+import { resolveActualTimestamp } from "../../utils/dateUtils.js";
 
 export const getOPDFinalBill = async (req: Request, res: Response) => {
   try {
@@ -324,8 +325,10 @@ export const getOPDFinalBill = async (req: Request, res: Response) => {
          mappedStatus = 'Paid';
       }
 
+      const resolvedTs = resolveActualTimestamp(payment.date, payment.createdAt);
       reportData.payments.push({
-        date: new Date(payment.date || payment.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+        date: resolvedTs ? resolvedTs.toISOString() : new Date().toISOString(),
+        createdAt: payment.createdAt || resolvedTs || undefined,
         receiptNo: payment.receiptNumber || payment.transactionId || payment._id.toString().slice(-6),
         receiptNumber: payment.receiptNumber || payment.transactionId || payment._id.toString().slice(-6),
         amount: payment.amount || 0,

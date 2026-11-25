@@ -14,6 +14,7 @@ import Hospital from "../../Hospital/Models/Hospital.js";
 import Appointment from "../../Appointment/Models/Appointment.js";
 import TransactionReport from "../Models/TransactionReport.js";
 import { calculateBillBreakdown } from "../../IPD/Controllers/IPDBillingController.js";
+import { resolveActualTimestamp } from "../../utils/dateUtils.js";
 
 // Helper to calculate days between dates (min 1 day)
 const calculateDays = (start: Date, end: Date | null): number => {
@@ -354,17 +355,21 @@ export const getIPDFinalBill = async (req: Request, res: Response) => {
     });
 
     // --- D. Payments ---
-    reportData.payments = (breakdown.advances || []).map((adv: any) => ({
-      date: new Date(adv.date || adv.createdAt || Date.now()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
-      receiptNo: adv.reference || adv.receiptNumber || adv.transactionId || (adv._id ? adv._id.toString().slice(-6) : "ADV"),
-      receiptNumber: adv.reference || adv.receiptNumber || adv.transactionId || (adv._id ? adv._id.toString().slice(-6) : "ADV"),
-      amount: adv.amount || 0,
-      type: adv.transactionType || "Advance",
-      mode: adv.mode || "Cash",
-      paymentMode: adv.mode || "Cash",
-      status: "Paid",
-      paymentDetails: adv.paymentDetails || undefined,
-    }));
+    reportData.payments = (breakdown.advances || []).map((adv: any) => {
+      const resolvedTs = resolveActualTimestamp(adv.date, adv.createdAt);
+      return {
+        date: resolvedTs ? resolvedTs.toISOString() : new Date().toISOString(),
+        createdAt: adv.createdAt || resolvedTs || undefined,
+        receiptNo: adv.reference || adv.receiptNumber || adv.transactionId || (adv._id ? adv._id.toString().slice(-6) : "ADV"),
+        receiptNumber: adv.reference || adv.receiptNumber || adv.transactionId || (adv._id ? adv._id.toString().slice(-6) : "ADV"),
+        amount: adv.amount || 0,
+        type: adv.transactionType || "Advance",
+        mode: adv.mode || "Cash",
+        paymentMode: adv.mode || "Cash",
+        status: "Paid",
+        paymentDetails: adv.paymentDetails || undefined,
+      };
+    });
 
     const grandTotal = (breakdown.bedCharges?.total || 0) + (breakdown.extraCharges?.total || 0);
     const returnCredits = breakdown.financials?.returnCredits || 0;
